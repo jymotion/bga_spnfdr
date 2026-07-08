@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>bga_spnfdr</AssemblyName>
+    <RootNamespace>BgaSpnfdr</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.0.0</Version>
+    <Company>bga_spnfdr</Company>
+    <Product>bga_spnfdr</Product>
+    <Description>Displays BattleTanx: Global Assault route notes based on the on-screen score</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <!-- WinRT projections for the OCR engine built into Windows 10/11 -->
+    <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.22621.2428" />
+    <!-- TextFieldParser for route CSVs with quoted multi-line notes (in-box) -->
+    <Reference Include="Microsoft.VisualBasic" />
+  </ItemGroup>
+
+</Project>
