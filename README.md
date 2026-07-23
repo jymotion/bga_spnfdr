@@ -2,43 +2,23 @@
 
 Displays route notes for **BattleTanx: Global Assault** (N64) speedruns based
 on the player's current score, read live from the capture feed with OCR.
-Successor to the spnfdr Python scripts, built for easy distribution: one
-small `.exe` (~45 KB), no installer, no bundled runtimes, nothing external.
-
-- **C# WinForms on .NET Framework 4.8** — preinstalled on every Windows 10/11
-  machine, so end users need nothing but the exe.
-- **Window capture via `PrintWindow(PW_RENDERFULLCONTENT)`** — captures a
-  specific window's contents from the compositor, so it keeps working while
-  that window is covered by other windows. (It cannot capture a *minimized*
-  window — restore it, then cover it with anything.)
-- **OCR via Windows' built-in engine** (`Windows.Media.Ocr`) — ships with
-  Windows, so no Tesseract folder to distribute.
-- Follows the Windows light/dark app theme (detected at launch).
 
 ## Using it
 
 1. **Select Capture Window**, then click the window showing the N64 feed
-   (e.g. the OBS projector or media player). The window under the cursor is
-   tinted red while choosing; clicking one of this app's own windows (or
-   right-clicking) backs out without selecting.
-2. The **gameplay feed is auto-detected** over the next ~4 seconds (countdown
-   in the status bar) and shown as a red "game feed" box. Detection looks for
-   the largest 4:3-ish region with constant motion, so it finds the feed even
-   inside a busy window like the OBS main UI; if nothing moves it falls back
-   to trimming black letterbox bars. If the box looks wrong, use **Re-try
-   Automatic Crop** (~2 seconds, best while gameplay is moving) or
-   **Manually Crop Gamefeed** (arms one drag on the preview, then returns to
-   view-only). The score area is derived from the crop — x 0–35%, y 89–94%
-   of the game picture — and drawn as a green box.
-3. **Select Route CSV** — column 1 = score, column 2 = note text (quoted
+   (e.g. the OBS projector or media player).
+2. The program attempts to **auto-detect the game feed** within the window by
+   watching for movement for a few seconds. If it fails to accurately crop
+   the game feed, you can click **Re-try Automatic Crop** to try again or
+   manually crop it yourself.
+4. **Select Route CSV** — column 1 = score, column 2 = note text (quoted
    multi-line notes work). When the confirmed score matches a CSV row, its
    note appears in the notes window — and stays up until a different score
    matches (a stale note beats a vanished one mid-run).
-4. **Change Notes Formatting** opens a dialog for font family, size,
+5. **Change Notes Formatting** opens a dialog for font family, size,
    bold/italic, text color, background color, and always-on-top. Changes
    preview live on the actual notes window; Save keeps them, Cancel reverts.
-   The window is sized to the largest note in the CSV so it never jumps
-   around mid-run.
+   The window is automatically sized to fit the largest note in the CSV.
 
 During a run the player only needs the notes window: once configured,
 **close the setup window** — capture and OCR keep running. Right-click (or
