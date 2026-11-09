@@ -9,6 +9,8 @@
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>BgaSpnfdr.Bench</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- same confirmation rule as the Linux app, which reads every frame -->
+    <DefineConstants>$(DefineConstants);READ_EVERY_FRAME</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

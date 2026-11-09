@@ -90,6 +90,9 @@ order:
    on 2 consecutive frames; a *lower* value than the current score, or a
    forward jump over 50,000, needs 5 (scores only go up mid-run and never
    leap — such reads are fragments like "25" off the end of 468025, or
-   junk-prefix reads like "773550" from 273850).
+   junk-prefix reads like "773550" from 273850). The Linux build reads every
+   frame (~30 a second) instead of 10, so it needs 3 and 8 to cover the same
+   span of time; back-to-back frames look almost identical, so a misread can
+   repeat. Measured on a full recorded run with `Tools/ReaderBench`.
 9. **Hold on loss** — when the score is hidden (menus, cutscenes, explosions)
    the last confirmed value is kept rather than cleared.

@@ -11,10 +11,21 @@ namespace BgaSpnfdr
     /// </summary>
     internal sealed class ScoreTracker
     {
+#if READ_EVERY_FRAME
+        // Builds that read every frame (~30 a second, the Linux build) need
+        // more reads to cover the same ~0.1 s span: back-to-back frames look
+        // almost identical, so a misread can repeat. On the reference run
+        // (Tools/ReaderBench) 3/8 gave no wrong scores and missed none that
+        // were on screen for 2+ frames. Builds without this symbol (Windows)
+        // compile exactly as before.
+        private const int ConfirmReads = 3;
+        private const int BackwardConfirmReads = 8;
+#else
         private const int ConfirmReads = 2;         // identical consecutive reads needed
         private const int BackwardConfirmReads = 5; // lower values / huge jumps are usually
                                                     // fragments or junk-prefix reads and
                                                     // need much stronger evidence
+#endif
 
         // plain fields rather than properties: properties generate extra
         // methods and metadata, and the Windows exe is kept as small as it was
