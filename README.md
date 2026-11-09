@@ -48,9 +48,11 @@ Output: `Windows\bin\Release\net48\bga_spnfdr.exe`. Ship that single file
 |---|---|---|
 | `Core/` | Platform-neutral logic: BattleTanx constants, OCR safeguards, route CSV loading | Every build |
 | `Windows/` | Windows app: window capture, Windows OCR, WinForms UI | Windows build only |
+| `Linux/` | Linux app, in progress. So far: `DigitReader.cs`, a built-in score reader (no OCR engine) | Linux build only |
 | `Tests/` | Tests for `Core/` (`dotnet test Tests`) | Nothing shipped |
+| `Tools/ReaderBench/` | Measures the digit reader on a recorded run against hand-verified ground truth | Nothing shipped |
 
-A Linux version is planned; it will live in `Linux/`. Each app's project
+Each app's project
 compiles only its own folder plus `Core/`, straight into its executable (no
 shared DLL), so nothing from one platform can end up in the other's build.
 `Core/` code must build on both, so it can't use Windows- or Linux-only

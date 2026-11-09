@@ -1,0 +1,161 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+
+namespace BgaSpnfdr.Bench
+{
+    /// <summary>
+    /// Plays the reference run through DigitReader + ScoreTracker exactly as
+    /// the app would, and compares against ground-truth.txt (one line per
+    /// stretch where the score is on screen: part, start s, end s, score;
+    /// sampled at 10 fps and checked by eye frame-group by frame-group).
+    ///
+    /// Usage (needs ffmpeg; the recording is on the footage branch):
+    ///   git worktree add ../footage origin/footage
+    ///   dotnet run -c Release --project Tools/ReaderBench -- [fps] [footage dir] [rows searched] [misalignment]
+    /// e.g. "-- 30 ../footage/footage 2 0". Simulated misalignment shifts the
+    /// band by that many rows to check the reader's vertical search.
+    /// </summary>
+    internal static class Program
+    {
+        // where the reader's band sits in the reference 640x480 capture
+        // (game picture at x 14, y 2; band at crop y 423 -> capture y 425)
+        private const int BandX = 14, BandY = 425, BandWidth = 216;
+
+        private static int Main(string[] args)
+        {
+            double fps = args.Length > 0 ? double.Parse(args[0]) : 30;
+            string footage = args.Length > 1 ? args[1] : "footage";
+            // rows searched above/below the expected band, and a deliberate
+            // misalignment to simulate a setup whose crop is a little off
+            int margin = args.Length > 2 ? int.Parse(args[2]) : 2;
+            int shift = args.Length > 3 ? int.Parse(args[3]) : 0;
+            int height = DigitReader.BandHeight + 2 * margin;
+            string[] parts = Directory.GetFiles(footage, "part*.mp4").OrderBy(p => p).ToArray();
+            if (parts.Length == 0)
+            {
+                Console.Error.WriteLine($"no footage/part*.mp4 found under '{footage}' (check out the footage branch)");
+                return 1;
+            }
+            var truth = LoadTruth(Path.Combine(AppContext.BaseDirectory, "ground-truth.txt"));
+            var trueScores = new HashSet<long>(truth.Select(t => t.Score));
+
+            var reader = new DigitReader();
+            var tracker = new ScoreTracker();
+            // a "note" for every possible score, so HandleReads reports each
+            // newly confirmed score
+            var route = new Dictionary<long, string>();
+            for (long s = 0; s < 1000000; s += 25) route[s] = s.ToString();
+
+            var band = new byte[BandWidth * height];
+            long frames = 0, visible = 0, correct = 0, wrongPlausible = 0, hidden = 0, falseReads = 0;
+            var wrongConfirmed = new SortedSet<long>();
+            var firstSeen = new Dictionary<long, double>();  // global seconds
+            var confirmedAt = new Dictionary<long, double>();
+            var readTime = new Stopwatch();
+            double offset = 0;
+            for (int p = 0; p < parts.Length; p++)
+            {
+                var ffmpeg = Process.Start(new ProcessStartInfo("ffmpeg",
+                    $"-v error -i \"{parts[p]}\" -vf fps={fps},crop={BandWidth}:{height}:{BandX}:{BandY - margin + shift}:exact=1 -f rawvideo -pix_fmt gray -")
+                { RedirectStandardOutput = true, UseShellExecute = false });
+                var stdout = ffmpeg.StandardOutput.BaseStream;
+                double t = 0, duration = 0;
+                for (long k = 0; ReadExactly(stdout, band); k++, frames++)
+                {
+                    t = k / fps;
+                    readTime.Start();
+                    string read = reader.Read(band, BandWidth, height);
+                    readTime.Stop();
+                    string note = tracker.HandleReads(read, read, route);
+                    long expected = Expected(truth, p, t);
+                    if (note != null)
+                    {
+                        long score = long.Parse(note);
+                        if (!trueScores.Contains(score)) wrongConfirmed.Add(score);
+                        else if (!confirmedAt.ContainsKey(score)) confirmedAt[score] = offset + t;
+                    }
+                    if (expected >= 0)
+                    {
+                        visible++;
+                        if (!firstSeen.ContainsKey(expected)) firstSeen[expected] = offset + t;
+                        if (read == expected.ToString()) correct++;
+                        else if (Plausible(read)) wrongPlausible++;
+                    }
+                    else if (expected == -1)
+                    {
+                        hidden++;
+                        if (Plausible(read)) falseReads++;
+                    }
+                    duration = t;
+                }
+                ffmpeg.WaitForExit();
+                offset += duration + 1 / fps;
+            }
+
+            var missed = firstSeen.Keys.Where(s => !confirmedAt.ContainsKey(s)).OrderBy(s => s).ToList();
+            var delays = firstSeen.Where(kv => confirmedAt.ContainsKey(kv.Key))
+                .Select(kv => Math.Max(0, confirmedAt[kv.Key] - kv.Value)).OrderBy(d => d).ToList();
+            Console.WriteLine($"frames read: {frames} at {fps} fps ({offset / 60:F1} min of footage), " +
+                              $"band searched +/-{margin} rows, simulated misalignment {shift} rows");
+            Console.WriteLine($"score visible: {visible} frames, read exactly right {100.0 * correct / visible:F1}%, wrong but plausible {wrongPlausible}");
+            Console.WriteLine($"score hidden: {hidden} frames, plausible false reads {falseReads}");
+            Console.WriteLine($"scores on screen: {firstSeen.Count}, confirmed {firstSeen.Count - missed.Count}, missed [{string.Join(", ", missed)}]");
+            Console.WriteLine($"WRONG scores confirmed: [{string.Join(", ", wrongConfirmed)}]");
+            Console.WriteLine($"delay to confirm: median {delays[delays.Count / 2]:F2}s, 90th pct {delays[(int)(delays.Count * 0.9)]:F2}s, max {delays.Last():F2}s");
+            Console.WriteLine($"reader CPU: {readTime.Elapsed.TotalMilliseconds / frames:F3} ms per frame " +
+                              $"({100 * readTime.Elapsed.TotalSeconds / frames * fps:F2}% of one core at {fps} fps)");
+            return 0;
+        }
+
+        private static bool Plausible(string read) =>
+            read.Length > 0 && read.Length <= 6 && !(read.Length > 1 && read[0] == '0')
+            && long.Parse(read) % 25 == 0;
+
+        private struct Segment { public int Part; public double Start, End; public long Score; }
+
+        private static List<Segment> LoadTruth(string path) =>
+            File.ReadAllLines(path).Where(l => l.Trim().Length > 0).Select(l =>
+            {
+                var f = l.Split(' ');
+                return new Segment
+                {
+                    Part = int.Parse(f[0]), Start = double.Parse(f[1]),
+                    End = double.Parse(f[2]), Score = long.Parse(f[3]),
+                };
+            }).ToList();
+
+        /// <summary>The true score at time t: the 10 fps samples on either
+        /// side must agree. -1 = hidden on both, -2 = a change happens
+        /// between them (frame excluded from per-frame stats).</summary>
+        private static long Expected(List<Segment> truth, int part, double t)
+        {
+            double k0 = Math.Floor(t * 10 + 1e-6) / 10, k1 = k0 + 0.1;
+            long a = At(truth, part, k0), b = At(truth, part, k1);
+            if (Math.Abs(t - k0) < 1e-6) return a;
+            return a == b ? a : -2;
+        }
+
+        private static long At(List<Segment> truth, int part, double t)
+        {
+            foreach (var s in truth)
+                if (s.Part == part && t >= s.Start - 1e-6 && t <= s.End + 1e-6)
+                    return s.Score;
+            return -1;
+        }
+
+        private static bool ReadExactly(Stream s, byte[] buffer)
+        {
+            int got = 0;
+            while (got < buffer.Length)
+            {
+                int n = s.Read(buffer, got, buffer.Length - got);
+                if (n <= 0) return false;
+                got += n;
+            }
+            return true;
+        }
+    }
+}
