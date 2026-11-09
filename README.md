@@ -11,11 +11,11 @@ on the player's current score, read live from the capture feed with OCR.
    watching for movement for a few seconds. If it fails to accurately crop
    the game feed, you can click **Re-try Automatic Crop** to try again or
    manually crop it yourself.
-4. **Select Route CSV** — column 1 = score, column 2 = note text (quoted
+3. **Select Route CSV** — column 1 = score, column 2 = note text (quoted
    multi-line notes work). When the confirmed score matches a CSV row, its
    note appears in the notes window — and stays up until a different score
    matches (a stale note beats a vanished one mid-run).
-5. **Change Notes Formatting** opens a dialog for font family, size,
+4. **Change Notes Formatting** opens a dialog for font family, size,
    bold/italic, text color, background color, and always-on-top. Changes
    preview live on the actual notes window; Save keeps them, Cancel reverts.
    The window is automatically sized to fit the largest note in the CSV.
@@ -36,22 +36,37 @@ holding through menus).
 Requires the .NET 8 SDK (build machine only):
 
 ```
-dotnet build bga_spnfdr.csproj -c Release
+dotnet build Windows\bga_spnfdr.csproj -c Release
 ```
 
-Output: `bin\Release\net48\bga_spnfdr.exe`. Ship that single file (the
-`.pdb` and `.exe.config` are not needed).
+Output: `Windows\bin\Release\net48\bga_spnfdr.exe`. Ship that single file
+(the `.pdb` and `.exe.config` are not needed).
+
+## Repository layout
+
+| Folder | What's in it | Compiled into |
+|---|---|---|
+| `Core/` | Platform-neutral logic: BattleTanx constants, OCR safeguards, route CSV loading | Every build |
+| `Windows/` | Windows app: window capture, Windows OCR, WinForms UI | Windows build only |
+| `Tests/` | Tests for `Core/` (`dotnet test Tests`) | Nothing shipped |
+
+A Linux version is planned; it will live in `Linux/`. Each app's project
+compiles only its own folder plus `Core/`, straight into its executable (no
+shared DLL), so nothing from one platform can end up in the other's build.
+`Core/` code must build on both, so it can't use Windows- or Linux-only
+APIs (the test project, which targets plain .NET 8, catches that).
 
 ## OCR safeguards
 
-All BattleTanx-specific knowledge is baked into the code (constants at the
-top of `MainForm.cs`, font mappings in `ScoreParser.cs`, image pipeline in
-`ScoreImage.cs`). The displayed score only changes when a read survives all
-of these checks, in order:
+All BattleTanx-specific knowledge is baked into the code (constants in
+`Core/BattleTanx.cs`, checks below in `Core/ScoreTracker.cs`, font mappings in
+`Core/ScoreParser.cs`, Windows image pipeline in `Windows/ScoreOcr.cs`).
+The displayed score only changes when a read survives all of these checks, in
+order:
 
 1. **Lookalike mapping** — Windows OCR has no digits-only mode and reads the
    game font's digits as letters (5→S/s/t, 0→O/U/Ü, 9→g/Y/y/J, 1→I/l, 2→Z,
-   7→r, 8→B); all mapped back (`ScoreParser.cs`).
+   7→r, 8→B); all mapped back (`Core/ScoreParser.cs`).
 2. **Unmappable characters reject the whole read** — dropping a bad character
    would silently shift the number (e.g. "47987S" → 47987 instead of 479875).
 3. **Length cap** — BattleTanx scores never reach 7 digits, so longer reads

@@ -10,19 +10,8 @@ namespace BgaSpnfdr
 {
     public class MainForm : Form
     {
-        // ----- BattleTanx: Global Assault constants -----
-        // Where the score sits inside the full game picture, as fractions of
-        // the crop: x 0–35%, y 89–94% (tuned against the real feed).
-        private static readonly RectangleF ScoreFraction = new RectangleF(0f, 0.89f, 0.35f, 0.05f);
-        private const int ScoreMultiple = 25;    // scores always move in 25s
-        private const int MaxScoreDigits = 6;    // scores never reach 1,000,000
-        private const long MaxScoreJump = 50000; // bigger forward jumps are misreads
-
-        // ----- OCR confirmation -----
-        private const int ConfirmReads = 2;         // identical consecutive reads needed
-        private const int BackwardConfirmReads = 5; // lower values / huge jumps are usually
-                                                    // fragments or junk-prefix reads and
-                                                    // need much stronger evidence
+        // BattleTanx constants and the OCR safeguards live in Core/ (shared
+        // with the Linux build): BattleTanx.cs, ScoreTracker.cs, ScoreParser.cs.
 
         // ----- auto-crop -----
         private const int AutoCropFramesInitial = 40; // ~4s after selecting a window
@@ -56,10 +45,7 @@ namespace BgaSpnfdr
         private Dictionary<long, string> _scoreTable = new Dictionary<long, string>();
 
         private bool _ocrBusy;
-        private string _pendingRead; // last read awaiting confirmation
-        private int _pendingCount;
-        private long _confirmedScore = -1;
-        private string _ocrStatus = "OCR idle";
+        private readonly ScoreTracker _tracker = new ScoreTracker();
 
         public MainForm()
         {
@@ -355,25 +341,10 @@ namespace BgaSpnfdr
 
         private void LoadCsv(string path)
         {
-            var table = new Dictionary<long, string>();
+            Dictionary<long, string> table;
             try
             {
-                using (var parser = new Microsoft.VisualBasic.FileIO.TextFieldParser(path))
-                {
-                    parser.SetDelimiters(",");
-                    parser.HasFieldsEnclosedInQuotes = true; // multi-line quoted notes
-                    while (!parser.EndOfData)
-                    {
-                        string[] fields;
-                        try { fields = parser.ReadFields(); }
-                        catch (Microsoft.VisualBasic.FileIO.MalformedLineException) { continue; }
-                        if (fields != null && fields.Length >= 2
-                            && long.TryParse(fields[0].Trim(), out long score))
-                            table[score] = fields[1];
-                    }
-                }
-                if (table.Count == 0)
-                    throw new InvalidDataException("no \"score,note\" rows found");
+                table = RouteCsv.Load(path);
             }
             catch (Exception ex)
             {
@@ -467,7 +438,7 @@ namespace BgaSpnfdr
             }
             else if (!_picker.Active)
             {
-                _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus : _ocrStatus;
+                _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus : _tracker.Status;
             }
         }
 
@@ -479,10 +450,10 @@ namespace BgaSpnfdr
             if (crop.Width <= 0 || crop.Height <= 0)
                 return Rectangle.Empty;
             return new Rectangle(
-                crop.X + (int)(ScoreFraction.X * crop.Width),
-                crop.Y + (int)(ScoreFraction.Y * crop.Height),
-                Math.Max(1, (int)(ScoreFraction.Width * crop.Width)),
-                Math.Max(1, (int)(ScoreFraction.Height * crop.Height)));
+                crop.X + (int)(BattleTanx.ScoreFraction.X * crop.Width),
+                crop.Y + (int)(BattleTanx.ScoreFraction.Y * crop.Height),
+                Math.Max(1, (int)(BattleTanx.ScoreFraction.Width * crop.Width)),
+                Math.Max(1, (int)(BattleTanx.ScoreFraction.Height * crop.Height)));
         }
 
         // ---------- OCR ----------
@@ -491,7 +462,7 @@ namespace BgaSpnfdr
         {
             if (!_ocr.Available)
             {
-                _ocrStatus = "OCR unavailable (no Windows OCR language installed)";
+                _tracker.Status = "OCR unavailable (no Windows OCR language installed)";
                 return;
             }
             if (_ocrBusy || _capture == null)
@@ -516,7 +487,7 @@ namespace BgaSpnfdr
                 string textBin = await _ocr.ReadAsync(binarized);
                 // the engine is flaky about scale on this font: if the clean
                 // binarized image gave nothing usable, retry it resized
-                if (ValidCandidate(textBin) == null)
+                if (_tracker.ValidCandidate(textBin) == null)
                 {
                     foreach (float s in new[] { 0.5f, 1.5f })
                     {
@@ -524,7 +495,7 @@ namespace BgaSpnfdr
                                    (int)(binarized.Width * s), (int)(binarized.Height * s)))
                         {
                             string retry = await _ocr.ReadAsync(scaled);
-                            if (ValidCandidate(retry) != null)
+                            if (_tracker.ValidCandidate(retry) != null)
                             {
                                 textBin = retry;
                                 break;
@@ -533,11 +504,13 @@ namespace BgaSpnfdr
                     }
                 }
                 string textColor = await _ocr.ReadAsync(color);
-                HandleOcrReads(textBin, textColor);
+                string note = _tracker.HandleReads(textBin, textColor, _scoreTable);
+                if (note != null)
+                    _notesForm.SetNote(note);
             }
             catch (Exception ex)
             {
-                _ocrStatus = "OCR error: " + ex.Message;
+                _tracker.Status = "OCR error: " + ex.Message;
             }
             finally
             {
@@ -545,107 +518,6 @@ namespace BgaSpnfdr
                 color.Dispose();
                 _ocrBusy = false;
             }
-        }
-
-        /// <summary>Returns the digit string if this read passes every sanity
-        /// check, otherwise null (with the reason in _ocrStatus).</summary>
-        private string ValidCandidate(string text)
-        {
-            // Safeguard: map lookalike letters back to digits; reject reads
-            // with unmappable characters instead of dropping them
-            string digits = ScoreParser.Normalize(text);
-            if (string.IsNullOrEmpty(digits))
-                return null;
-
-            // Safeguard: BattleTanx never zero-pads its score, so a leading
-            // zero means a fragment ("038so" off 273850 isn't a real 3850)
-            if (digits.Length > 1 && digits[0] == '0')
-            {
-                _ocrStatus = $"read \"{digits}\" rejected (leading zero)";
-                return null;
-            }
-
-            // Safeguard: absurdly long reads are garbage
-            if (digits.Length > MaxScoreDigits)
-            {
-                _ocrStatus = $"read \"{digits}\" rejected (too long)";
-                return null;
-            }
-
-            // Safeguard: BattleTanx scores only move in 25-point increments
-            long value = long.Parse(digits);
-            if (value % ScoreMultiple != 0)
-            {
-                _ocrStatus = $"read {value} rejected (not a multiple of {ScoreMultiple})";
-                return null;
-            }
-            return digits;
-        }
-
-        private void HandleOcrReads(string textBin, string textColor)
-        {
-            string a = ValidCandidate(textBin);
-            string b = ValidCandidate(textColor);
-
-            string candidate;
-            if (a != null && b != null && a != b)
-            {
-                // Safeguard: both variants read a plausible but different
-                // number — can't tell which is right, skip this frame
-                _ocrStatus = $"ambiguous read ({a} vs {b}) — skipped";
-                return;
-            }
-            else if (a != null || b != null)
-            {
-                candidate = a ?? b;
-            }
-            else
-            {
-                // Safeguard: score hidden/unreadable -> hold the last
-                // confirmed value (lost notes are worse than stale ones)
-                _pendingRead = null;
-                _pendingCount = 0;
-                if (string.IsNullOrEmpty(textBin) && string.IsNullOrEmpty(textColor))
-                    _ocrStatus = _confirmedScore >= 0
-                        ? $"no digits visible — holding {_confirmedScore}"
-                        : "no digits visible";
-                return;
-            }
-
-            // Safeguard: a new value must be read on ConfirmReads consecutive
-            // frames before it is accepted (kills one-frame misreads)
-            if (candidate == _pendingRead)
-                _pendingCount++;
-            else
-            {
-                _pendingRead = candidate;
-                _pendingCount = 1;
-            }
-
-            long score = long.Parse(candidate);
-            // Safeguard: backward moves and implausibly large jumps are almost
-            // always junk-prefix reads ("77 3sso" → 773550) or fragments, so
-            // they need much stronger evidence (scores only go up mid-run)
-            bool suspicious = _confirmedScore >= 0
-                && (score < _confirmedScore || score - _confirmedScore > MaxScoreJump);
-            int required = suspicious ? BackwardConfirmReads : ConfirmReads;
-            if (_pendingCount < required)
-            {
-                _ocrStatus = $"reading {score} ({_pendingCount}/{required})";
-                return;
-            }
-
-            if (score != _confirmedScore)
-            {
-                _confirmedScore = score;
-                // a note stays up until a different score has one — a stale
-                // note beats a vanished one mid-run
-                if (_scoreTable.TryGetValue(score, out string note))
-                    _notesForm.SetNote(note);
-            }
-            _ocrStatus = _scoreTable.ContainsKey(score)
-                ? $"score {score} (note shown)"
-                : $"score {score}";
         }
 
         // ---------- painting & coordinate mapping ----------

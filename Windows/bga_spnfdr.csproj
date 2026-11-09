@@ -22,4 +22,11 @@
     <Reference Include="Microsoft.VisualBasic" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Platform-neutral logic shared with the Linux build, compiled straight
+         into this exe (no extra DLL). This project only ever sees Windows/
+         and Core/; nothing Linux-specific can end up in the Windows build. -->
+    <Compile Include="..\Core\*.cs" Link="Core\%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>
