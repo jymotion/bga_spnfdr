@@ -1,12 +1,17 @@
 ﻿# bga_spnfdr
 
 Displays route notes for **BattleTanx: Global Assault** (N64) speedruns based
-on the player's current score, read live from the capture feed with OCR.
+on the player's current score, read live from the capture feed. Runs on
+Windows and Linux.
 
 ## Using it
 
-1. **Select Capture Window**, then click the window showing the N64 feed
-   (e.g. the OBS projector or media player).
+1. **Select Capture Window**, then pick the window showing the N64 feed
+   (e.g. the OBS projector or media player). On Windows, click it. On Linux,
+   your desktop's screen-sharing prompt opens (the same one OBS and browsers
+   use); pick the window there. Linux remembers the choice, so later
+   launches reconnect without asking (where the desktop supports it, e.g.
+   KDE Plasma and GNOME).
 2. The program attempts to **auto-detect the game feed** within the window by
    watching for movement for a few seconds. If it fails to accurately crop
    the game feed, you can click **Re-try Automatic Crop** to try again or
@@ -25,13 +30,16 @@ During a run the player only needs the notes window: once configured,
 double-click) the notes window for "Capture setup…" and "Exit". The notes
 window is always visible — it IS the program — and closing it exits the app.
 
-Everything — capture window (by title), crop, CSV path, formatting,
-notes-window position, setup-window size — persists across launches in
-`%APPDATA%\bga_spnfdr\settings.txt`. The status bar at the bottom of the
-setup window shows live OCR activity (current score, rejected misreads,
-holding through menus).
+Everything — capture window, crop, CSV path, formatting, notes-window
+position, setup-window size — persists across launches in
+`%APPDATA%\bga_spnfdr\settings.txt` (Windows) or
+`~/.config/bga_spnfdr/settings.txt` (Linux). The status bar at the bottom of
+the setup window shows live reading activity (current score, rejected
+misreads, holding through menus).
 
 ## Building
+
+### Windows
 
 Requires the .NET 8 SDK (build machine only):
 
@@ -40,7 +48,30 @@ dotnet build Windows\bga_spnfdr.csproj -c Release
 ```
 
 Output: `Windows\bin\Release\net48\bga_spnfdr.exe`. Ship that single file
-(the `.pdb` and `.exe.config` are not needed).
+(the `.pdb` and `.exe.config` are not needed). It needs nothing else: .NET
+Framework 4.8, WinForms and the OCR engine are part of Windows 10/11.
+
+### Linux
+
+Requires the .NET 8 SDK and clang (build machine only; on Arch:
+`sudo pacman -S dotnet-sdk clang`):
+
+```
+dotnet publish Linux/bga_spnfdr.csproj -c Release -o out
+```
+
+Output: `out/bga_spnfdr`, one self-contained native program (about 2 MB,
+under 1 MB compressed; no .NET install needed to run it). Ship that single
+file (`bga_spnfdr.dbg` is debug symbols). It uses what Linux desktops
+already have: GTK 3, PipeWire, and the screen-sharing portal
+(xdg-desktop-portal plus the desktop's backend, e.g.
+xdg-desktop-portal-kde). It works on Wayland and X11. On Wayland it runs
+through XWayland, because only there may a window keep itself above other
+windows and remember its position, which the notes window needs.
+
+For testing without a desktop's prompt, `BGA_SPNFDR_PIPEWIRE_NODE=<id>`
+makes it read straight from a node on your own PipeWire (e.g. a GStreamer
+`pipewiresink` playing a recording).
 
 ## Repository layout
 
@@ -48,7 +79,7 @@ Output: `Windows\bin\Release\net48\bga_spnfdr.exe`. Ship that single file
 |---|---|---|
 | `Core/` | Platform-neutral logic: BattleTanx constants, OCR safeguards, route CSV loading | Every build |
 | `Windows/` | Windows app: window capture, Windows OCR, WinForms UI | Windows build only |
-| `Linux/` | Linux app, in progress. So far: `DigitReader.cs`, a built-in score reader (no OCR engine) | Linux build only |
+| `Linux/` | Linux app: screen-sharing portal + PipeWire capture, built-in digit reader (no OCR engine), GTK 3 UI | Linux build only |
 | `Tests/` | Tests for `Core/` (`dotnet test Tests`) | Nothing shipped |
 | `Tools/ReaderBench/` | Measures the digit reader on a recorded run against hand-verified ground truth | Nothing shipped |
 
@@ -58,13 +89,25 @@ shared DLL), so nothing from one platform can end up in the other's build.
 `Core/` code must build on both, so it can't use Windows- or Linux-only
 APIs (the test project, which targets plain .NET 8, catches that).
 
+## Reading the score
+
+**Windows** uses the OCR engine built into Windows. **Linux** has no
+built-in OCR, so it uses `Linux/DigitReader.cs` instead: it matches the
+game's own digit shapes (2.5 KB of templates), finds the score wherever it
+sits under the minimap (its position changes per level), copes with the
+proportional font, and searches a couple of pixel rows up and down because
+being one row off loses digits. On a full recorded run (`Tools/ReaderBench`)
+it confirmed every score shown for 2+ frames with none wrong, using under 1%
+of one CPU core at 30 reads a second.
+
 ## OCR safeguards
 
 All BattleTanx-specific knowledge is baked into the code (constants in
 `Core/BattleTanx.cs`, checks below in `Core/ScoreTracker.cs`, font mappings in
 `Core/ScoreParser.cs`, Windows image pipeline in `Windows/ScoreOcr.cs`).
 The displayed score only changes when a read survives all of these checks, in
-order:
+order (steps 1, 2, 6 and 7 are Windows OCR specific; the Linux reader only
+outputs digits from one image per frame):
 
 1. **Lookalike mapping** — Windows OCR has no digits-only mode and reads the
    game font's digits as letters (5→S/s/t, 0→O/U/Ü, 9→g/Y/y/J, 1→I/l, 2→Z,

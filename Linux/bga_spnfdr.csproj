@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The Linux build: one self-contained native executable (Native AOT), no
+       .NET install needed to run it. Uses the desktop's own GTK 3, PipeWire
+       and screen-sharing portal. Compiles only Linux/ and Core/.
+       Build: dotnet publish Linux/bga_spnfdr.csproj -c Release
+       (needs the .NET 8 SDK and clang on the build machine) -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+    <AssemblyName>bga_spnfdr</AssemblyName>
+    <RootNamespace>BgaSpnfdr</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Version>1.1.0</Version>
+    <!-- reads every frame (~30/s): ScoreTracker needs 3 matching reads, not 2 -->
+    <DefineConstants>$(DefineConstants);READ_EVERY_FRAME</DefineConstants>
+
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <OptimizationPreference>Size</OptimizationPreference>
+    <StripSymbols>true</StripSymbols>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <EventSourceSupport>false</EventSourceSupport>
+    <DebuggerSupport>false</DebuggerSupport>
+    <StackTraceSupport>false</StackTraceSupport>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Core\*.cs" Link="Core\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>
