@@ -20,16 +20,10 @@ jobs:
         run: dotnet test Tests -c Release
       - name: Windows app
         run: dotnet build Windows/bga_spnfdr.csproj -c Release -o out/windows
-      - name: Windows side-by-side test build (Windows OCR + digit reader, logged)
-        run: dotnet build Windows/bga_spnfdr.csproj -c Release -p:SideBySide=true --no-incremental -o out/sidebyside
       - uses: actions/upload-artifact@v4
         with:
           name: bga_spnfdr-windows
           path: out/windows/bga_spnfdr.exe
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bga_spnfdr-windows-sidebyside-test
-          path: out/sidebyside/bga_spnfdr_sidebyside.exe
 
   linux:
     # built on the oldest supported Ubuntu so the program runs on as many

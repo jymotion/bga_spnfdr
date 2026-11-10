@@ -26,7 +26,7 @@ Windows and Linux.
    The window is automatically sized to fit the largest note in the CSV.
 
 During a run the player only needs the notes window: once configured,
-**close the setup window** — capture and OCR keep running. Right-click (or
+**close the setup window** — capture and reading keep running. Right-click (or
 double-click) the notes window for "Capture setup…" and "Exit". The notes
 window is always visible — it IS the program — and closing it exits the app.
 
@@ -49,7 +49,7 @@ dotnet build Windows\bga_spnfdr.csproj -c Release
 
 Output: `Windows\bin\Release\net48\bga_spnfdr.exe`. Ship that single file
 (the `.pdb` and `.exe.config` are not needed). It needs nothing else: .NET
-Framework 4.8, WinForms and the OCR engine are part of Windows 10/11.
+Framework 4.8 and WinForms are part of Windows 10/11.
 
 ### Linux
 
@@ -77,9 +77,9 @@ makes it read straight from a node on your own PipeWire (e.g. a GStreamer
 
 | Folder | What's in it | Compiled into |
 |---|---|---|
-| `Core/` | Platform-neutral logic: BattleTanx constants, OCR safeguards, route CSV loading | Every build |
-| `Windows/` | Windows app: window capture, Windows OCR, WinForms UI | Windows build only |
-| `Linux/` | Linux app: screen-sharing portal + PipeWire capture, built-in digit reader (no OCR engine), GTK 3 UI | Linux build only |
+| `Core/` | Platform-neutral logic: the digit reader, score band sampling, safeguards, BattleTanx constants, route CSV loading | Every build |
+| `Windows/` | Windows app: window capture, WinForms UI | Windows build only |
+| `Linux/` | Linux app: screen-sharing portal + PipeWire capture, GTK 3 UI | Linux build only |
 | `Tests/` | Tests for `Core/` (`dotnet test Tests`) | Nothing shipped |
 | `Tools/ReaderBench/` | Measures the digit reader on a recorded run against hand-verified ground truth | Nothing shipped |
 
@@ -91,51 +91,42 @@ APIs (the test project, which targets plain .NET 8, catches that).
 
 ## Reading the score
 
-**Windows** uses the OCR engine built into Windows. **Linux** has no
-built-in OCR, so it uses `Linux/DigitReader.cs` instead: it matches the
-game's own digit shapes (2.5 KB of templates), finds the score wherever it
-sits under the minimap (its position changes per level), copes with the
-proportional font, and searches a couple of pixel rows up and down because
-being one row off loses digits. On a full recorded run (`Tools/ReaderBench`)
-it confirmed every score shown for 2+ frames with none wrong, using under 1%
-of one CPU core at 30 reads a second.
+Both builds read the score with `Core/DigitReader.cs`, which matches the
+game's own digit shapes (1.3 KB of templates) instead of using an OCR
+engine. It finds the score wherever it sits under the minimap (the position
+changes per level), copes with the proportional font, and searches a couple
+of pixel rows up and down, because being one row off loses digits.
+`Core/ScoreBand.cs` cuts the score band out of the captured frame and scales
+it, so any capture resolution works (checked from 480x360 to 1440x1080).
 
-## OCR safeguards
+Measured on a full recorded run against a hand-verified answer key
+(`Tools/ReaderBench`, 111 distinct scores):
 
-All BattleTanx-specific knowledge is baked into the code (constants in
-`Core/BattleTanx.cs`, checks below in `Core/ScoreTracker.cs`, font mappings in
-`Core/ScoreParser.cs`, Windows image pipeline in `Windows/ScoreOcr.cs`).
-The displayed score only changes when a read survives all of these checks, in
-order (steps 1, 2, 6 and 7 are Windows OCR specific; the Linux reader only
-outputs digits from one image per frame):
+| | Scores confirmed | Wrong | Time per read |
+|---|---|---|---|
+| Windows (10 reads/s) | 103 | 0 | ~0.4 ms |
+| Linux (30 reads/s) | 109 | 0 | ~0.4 ms |
 
-1. **Lookalike mapping** — Windows OCR has no digits-only mode and reads the
-   game font's digits as letters (5→S/s/t, 0→O/U/Ü, 9→g/Y/y/J, 1→I/l, 2→Z,
-   7→r, 8→B); all mapped back (`Core/ScoreParser.cs`).
-2. **Unmappable characters reject the whole read** — dropping a bad character
-   would silently shift the number (e.g. "47987S" → 47987 instead of 479875).
-3. **Length cap** — BattleTanx scores never reach 7 digits, so longer reads
-   are garbage with extra characters.
-4. **Score increments** — scores are always multiples of 25; any other value
-   is a misread.
-5. **No leading zeros** — the score is never zero-padded, so a read like
-   "03850" is a fragment of a longer number, not a real 3850.
-6. **Two OCR variants per frame** — a binarized image (6x upscale → threshold
-   at median-luminance + margin, digits are the distinctly-bright pixels →
-   3x3 dilation to thicken the thin game font → white padding) and the plain
-   color image; each reads frames the other misses. If both produce
-   *different* valid numbers, the frame is skipped as ambiguous. (The upscale
-   must happen before dilation with enough headroom: at 4x the dilation
-   filled the loops of the 8, and 273850 read as 273550.)
-7. **Scale retry** — the engine is flaky about scale on this font; if the
-   binarized image yields nothing valid it is retried at 0.5x and 1.5x.
-8. **Consecutive-read confirmation** — a new value must be read identically
-   on 2 consecutive frames; a *lower* value than the current score, or a
+The scores it misses were on screen for under ~0.2 s. Run side by side on
+Windows, it beat the Windows OCR this app used before (104 vs 89 scores,
+none wrong either way, ~1 ms vs 45 ms per read).
+
+## Safeguards
+
+The displayed score only changes when a read survives all of these checks
+(`Core/ScoreTracker.cs`, constants in `Core/BattleTanx.cs`):
+
+1. **Plausible number** — digits only, at most 6 (scores never reach
+   1,000,000), a multiple of 25 (scores always move in 25s), and no leading
+   zero (the score is never zero-padded, so "039950" is 239950 with a lost
+   digit).
+2. **Consecutive-read confirmation** — a new value must be read identically
+   on 2 consecutive reads; a *lower* value than the current score, or a
    forward jump over 50,000, needs 5 (scores only go up mid-run and never
-   leap — such reads are fragments like "25" off the end of 468025, or
-   junk-prefix reads like "773550" from 273850). The Linux build reads every
-   frame (~30 a second) instead of 10, so it needs 3 and 8 to cover the same
-   span of time; back-to-back frames look almost identical, so a misread can
-   repeat. Measured on a full recorded run with `Tools/ReaderBench`.
-9. **Hold on loss** — when the score is hidden (menus, cutscenes, explosions)
-   the last confirmed value is kept rather than cleared.
+   leap; such reads are fragments with lost leading digits, like "25" off
+   the end of 468025). The Linux build reads every frame (~30 a second)
+   instead of 10, so it needs 3 and 8 to cover the same span of time;
+   back-to-back frames look almost identical, so a misread can repeat.
+3. **Hold on loss** — when the score is hidden (menus, cutscenes,
+   explosions) the last confirmed value is kept rather than cleared, and a
+   note stays up until a different score has one.

@@ -9,13 +9,13 @@
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>BgaSpnfdr.Bench</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <!-- same confirmation rule as the Linux app, which reads every frame -->
-    <DefineConstants>$(DefineConstants);READ_EVERY_FRAME</DefineConstants>
+    <!-- same confirmation rule as the Linux app, which reads every frame;
+         build with -p:WindowsRules=true for the Windows app's (10 reads/s) -->
+    <DefineConstants Condition="'$(WindowsRules)' != 'true'">$(DefineConstants);READ_EVERY_FRAME</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="..\..\Core\*.cs" Link="Core\%(Filename)%(Extension)" />
-    <Compile Include="..\..\Linux\DigitReader.cs" Link="Linux\DigitReader.cs" />
     <None Include="ground-truth.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

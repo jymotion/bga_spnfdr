@@ -7,9 +7,11 @@ namespace BgaSpnfdr
 {
     /// <summary>
     /// Reads the BattleTanx score straight from pixels by matching the game's
-    /// own digit shapes; no OCR engine or extra download. Learned from a real
-    /// full-game run (footage branch) and checked against a hand-verified
-    /// ground truth there (see Tools/ReaderBench).
+    /// own digit shapes; no OCR engine or extra download. Used by both the
+    /// Windows and Linux builds. Learned from a real full-game run (footage
+    /// branch) and checked against a hand-verified ground truth there (see
+    /// Tools/ReaderBench); on Windows it also beat Windows OCR side by side
+    /// on that run (104 vs 89 of 111 scores, none wrong, ~1 ms vs 45 ms).
     ///
     /// How it works:
     ///  - The score's font never changes, so each digit 0-9 is a small
@@ -30,7 +32,8 @@ namespace BgaSpnfdr
     ///    with a full search every RecheckEvery frames in case it changed.
     ///    Call Reset() when the crop changes.
     /// Validation (multiples of 25, confirmation reads, ...) is not done
-    /// here; reads go through Core/ScoreTracker like the Windows OCR's do.
+    /// here; reads go through Core/ScoreTracker. Core/ScoreBand prepares the
+    /// band from a captured frame.
     /// </summary>
     internal sealed class DigitReader
     {
@@ -53,43 +56,103 @@ namespace BgaSpnfdr
         private const int LockVotes = 5;
         private const int RecheckEvery = 30;
 
-        // 10 digits x 18 rows x 14 columns, brightness 0-255, row-major.
-        private const string TemplateData =
-            "LCssLC4vLi8tKysqKigqKio0T2hxZEEoKioqMyorKDZTanFoQigqKys0JTlyi2RNRlyUoVAiJy0kPHWNYkhCWJelTyAnLxg+" +
-            "gZA0AQYwhZk0AxgvGD6EkjICBi6GnDABGC8aPoSRMAIWQnp/KQEaMBs/g5AwAhhDeoEpARowGj+EkS4CGEiJkzQDGzAaQIOQ" +
-            "MAIZR4mWNAUbMRU8dYhOKCdFiZQxAhowEzxwg08qK0aFjiwBGjEXKC1Eep6hi08eBAAcLRkqKT15oKGMTRgDAR4uJS0tLCYY" +
-            "CgEAAg4gKC0nLS0rJRgKAQECECMpLCssLS0tLSopKyosKyssNDQyMjI0NDM0NDY3ODozNDIxMTQzMjM0NjhoozQ4NDY2NjQy" +
-            "MjQ1OW6iOEaCtrykTCwuMjZDbmI4SYOyvqdKJCwyN0VqXjc6QFCWoCoGHjQ2RGleNzY+SZSfKwYgNDZAaF42ODxIkp4sBR80" +
-            "Njk/Sjk6PUuSniwFHzQ2OD5HLjg+S5ScLAUiNDY2ODIsNzpOlpwrBiA0NjY2MCY2PkyYnioHIzQ1Njg6Jjg+UJadMAgkNDAy" +
-            "PEEpRoi+xcbAoGg+OUBaayhFisDEv8CiaEA2PlhsOj4+OA0AAQEAAB40Oiw4NzQwDAAAAAAAHDQ4Kjs6Ojw7Ozo6Ojo5Ojk5" +
-            "GBkdICAfHhoVExAODQsWE0ebwbyNQBsVExMUFxMQRp3AvY9DIBkWFRYYFhYkNzo0WpiELxUXFxcZGiQwNC9VmYUzFBMSFRUX" +
-            "Eg4HBS95fEYkEg4UFRYUDwYFMHt9SyUPCxQRFhQTEhdEjHMXAQQLERIVFRYWHEmLbRUAAw4TFBUUGEaPgTQJAAIKExQVFBQc" +
-            "SZKDMgYCBA0WERQgTpaMQSEZDw0MEhIRFiNPmYxGJB0WDQwPEREYLE+Dl5yYjW5GKRIPEhYmS32RmpWLcEMmDw4QExQNBAEB" +
-            "AQAAAAEBAg4QDwoDAQABAAAAAAEDDREREhEQDw8PDw8PDw8QIB8hJCQlIyIgISEhISEeIThxq8CmWSQcHh0dHiEhOXStwqhg" +
-            "Jh8fHB4eIzI9OjQ4UpWsWiAdLDcjMjk1MDRRl7BbIBstOyAgFw8NETB3lD4KEyk1ICAZEA4VN3uSOAsTKTUfISIoQnikjFYh" +
-            "BhMnMyAhIylEd6CHWSAIEygzICAhIRsYLHqYRRAYKjUgICIgGRkqe5pGERgqNSAnKyMZGzeJokcOEyg1IisvKB0fN4WeRAwT" +
-            "JzUlMVJ2l56JVB8FBhIfLSQuU3iYn4hQGQMHFBwoICEbDwQBAQECCREYHR8gHxoNAwEBAQIKEhgcGyAfHx4dHBoaGxsdHR0c" +
-            "LSwsLC0uLCwsLSwsLC4uLi8vLi4yMiwqKywsOC8uMC8uMDU3LCosLCw4LS0uMTZVlrpzNSklKi4tLC40OViYunI5JiMoLywq" +
-            "LEF6lZyOaD8iHCk0KiosQ32WnI5nPyIcKDcoOImQUEZzkWg8IRwpQio7ipRTR3WWaz4gGytDMkWUtLG4yNDHokcgKD0xRY6v" +
-            "rrTK0cioRx4pOzEsHxAEF16UbTwJBiAyMSwcDwQUWpFqOAkHHjAsLi0sLDE8PSwdExYqMi4wMDEyMjY4KRgXHC0xLi8uMDIx" +
-            "Mi4dFR4lLDIwMDAwMTAxKx4WICYtMTExMTExMTAvLi4wMDEyFRUXGBocHB0bGhgYGBgYHTZjmLy/q3ZGKRcYGBggPGefvsGs" +
-            "d0cnGBkaFyd7l0ogHh0eFQcIEhoWKHqVShwYGRgTBwgRHBQneqBqQCwaExIREhghFCR5nWxEMB8VFBQVGSETIDBMZH6Xm39Y" +
-            "LhkaJBYcLUhgfJSaf14xGhojGBobFw4IBh56ojoHFCAWGBsZDAYFHXimOgQSIBQVJCwiIjNMcXEfARIcERQoMSUnNExqahwB" +
-            "EhsUJE96lJiEXyYDAAITGxUgTXiVmoBcIgIBAxYaHCAhFwcBAQEAAxUgICIbHx4WBwEBAgEFFiEhIiAgHyAeHx8fHyAhIiIj" +
-            "KissLC0uLjAuLi0sKywrLCwsKTBHYXpzPycqKiwsLiwqMklie3I9JSknIiorQoGdbEMyIg4LGyMhLC5Hgp1qQzAgDQwaIyQx" +
-            "QVJocFlAMicdHCAnJjVDVGpyW0Q0KCEeIiopQG+QnZyCeJWYdVY8MCpBcI+dm394kZV6Wj8xJz5hcmRHGgIEMYiSOxYmPF9w" +
-            "YkYXAQIwi5Q7Eic0Nkl+kU0kO1x7bB8DJjM2R3+PTiw+W3hlHQIpMjE3RVyMn4ldKQcABSozMjVBWYmfh1ojAgEHMTEwMDEt" +
-            "HxAEAAEGHSsxMTEvLyscDwMAAAYcKjAwMC8uLi0tLi4tLi8vJSQnJykpKCgkIyMhHx8iJ2+4vsDArHc8KiIgIyAmcLnCwsOx" +
-            "eT8tIRwmHSArOERLW2+ap1wTFiYdICgyPkNWb5ejWBATJx8hIBwWFliNcD8WAgglHyIhHRYUWo9uOhICCyQhJCUhICduk00G" +
-            "BQ8UJB8mJiQkLWyPSAYGEBYjGyMlKF+OZjIPAQwgIyIYIiQrY5BiLAsACyQiIhAhJi5nkUoJBBEaJSUjDyEpMWaLRwcEExsk" +
-            "JCIXKT1INiQNAgsiJykoLxkqOkYzHgwBDyQoKSktKTI1MSIWFyMoLjEyMjMpMTIwJBgZJSovMTIxMjQ0NDMyMjIxMTIzMzIx" +
-            "CAgGCAgKDAgICAUCAgQICAgVNVpzTx4MBgMCAgkKDBg4VXZUIA0GAgICBjBiYlxCKmqrahQHBAIEMGRoYD0maa5tGQoGAgQ4" +
-            "eHx0PgpEll4WCAQEBTZ3fHg+CkSSXhQFBAYGBg9esMTAr5RIAAQEBgYHF1qrwLyulEYBAAQHElqcYRQAAkGUgFYpBggRWKRk" +
-            "EAAAQJaBWSYGBgtSk4RkNBZIknI8GQUGDUyRgGY2GkyMajgYAAIKDBBKiJ2dekcaAAACBwwKCkWGmptyQhIBBAEGJigoJSAS" +
-            "BQICBgwYJyYoKCcmHRAEAgIHDhkoKCwrKCcmJigpKSgmJygoQkE8RUQ+PDo5OTonFRBAQTpLX2dtVj8zFgwJAkBCPUtga25Y" +
-            "PDEWDxAOPWWdkE5OVYKkgiAQFgs2YKOOSFBRgqeEJBAaEC9foGoCAhpZlHUhAQsKL16fZgIHFVaXeiQHDQwxY6CfdF80dKqJ" +
-            "LQkLCzRfoqB8YT50sY4xDAUKOjoyarjEu8K+chEACQo9NS1luMLCwsJzDwAOCz85OCAVQ3CHkWMMABEQQT81HhVAd4aNXwAA" +
-            "FhBJSFJ0n6+4bSUEAhc2KUtMUHCfrcJsHwkBFTspSkxJPSEWAgEEDDpBQ0NJSUI2HhECAgQLO0FCQ0VEQ0NCQUBBQUE+QEFE";
+        // 10 digits x 18 rows x 14 columns, row-major, brightness in 16
+        // levels packed two pixels per byte (high nibble first): 1.3 KB, which
+        // keeps the Windows exe smaller than the OCR version was. 16 levels
+        // read the reference run as well as 256 did (same scores, none wrong).
+        private static readonly byte[] TemplateData =
+        {
+            51, 51, 51, 51, 51, 50, 34, 34, 35, 86, 118, 66, 34, 35,
+            35, 35, 86, 118, 66, 35, 51, 35, 120, 101, 69, 153, 82, 35,
+            36, 120, 100, 69, 154, 82, 35, 20, 136, 48, 3, 137, 48, 19,
+            20, 137, 48, 3, 137, 48, 19, 36, 137, 48, 20, 119, 32, 35,
+            36, 136, 48, 20, 120, 32, 35, 36, 137, 48, 20, 137, 48, 35,
+            36, 136, 48, 20, 137, 48, 35, 20, 120, 82, 36, 137, 48, 35,
+            20, 120, 82, 52, 136, 48, 35, 18, 52, 121, 152, 82, 0, 35,
+            18, 36, 121, 152, 81, 0, 35, 35, 51, 33, 16, 0, 18, 35,
+            35, 51, 33, 16, 0, 18, 35, 51, 51, 51, 34, 50, 51, 51,
+            51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 106,
+            51, 51, 51, 51, 51, 51, 106, 52, 139, 186, 67, 51, 52, 102,
+            52, 138, 186, 66, 51, 52, 102, 51, 69, 153, 32, 35, 52, 102,
+            51, 68, 153, 48, 35, 52, 102, 51, 68, 153, 48, 35, 51, 68,
+            51, 68, 153, 48, 35, 51, 68, 51, 68, 153, 48, 35, 51, 51,
+            51, 53, 153, 48, 35, 51, 51, 35, 68, 153, 32, 35, 51, 51,
+            35, 69, 153, 48, 35, 51, 68, 36, 139, 204, 185, 100, 52, 86,
+            36, 139, 203, 186, 100, 52, 86, 52, 67, 16, 0, 0, 35, 51,
+            51, 51, 16, 0, 0, 35, 50, 51, 52, 51, 51, 51, 51, 51,
+            17, 34, 34, 34, 17, 17, 17, 17, 73, 187, 132, 33, 17, 17,
+            17, 73, 187, 132, 33, 17, 17, 17, 35, 51, 89, 131, 17, 17,
+            18, 35, 51, 89, 131, 17, 17, 17, 17, 0, 55, 116, 33, 17,
+            17, 17, 0, 55, 116, 33, 17, 17, 17, 17, 72, 113, 0, 17,
+            17, 17, 18, 72, 97, 0, 17, 17, 17, 72, 131, 16, 1, 17,
+            17, 18, 73, 131, 0, 1, 17, 18, 89, 132, 33, 17, 17, 17,
+            18, 89, 132, 34, 17, 17, 17, 19, 88, 153, 152, 100, 33, 17,
+            18, 71, 153, 152, 116, 33, 17, 17, 16, 0, 0, 0, 0, 1,
+            17, 16, 0, 0, 0, 0, 1, 17, 17, 17, 17, 17, 17, 17,
+            34, 34, 34, 34, 34, 34, 34, 34, 55, 171, 165, 34, 34, 34,
+            34, 55, 171, 166, 34, 34, 34, 35, 67, 51, 89, 165, 34, 51,
+            35, 51, 51, 89, 165, 34, 51, 34, 17, 17, 55, 148, 17, 35,
+            34, 17, 17, 55, 147, 17, 35, 34, 34, 71, 168, 82, 1, 35,
+            34, 34, 71, 152, 82, 1, 35, 34, 34, 33, 55, 148, 17, 35,
+            34, 34, 17, 39, 148, 17, 35, 34, 50, 18, 56, 164, 17, 35,
+            35, 50, 34, 56, 148, 17, 35, 35, 87, 153, 133, 32, 1, 35,
+            35, 87, 153, 133, 16, 1, 34, 34, 33, 0, 0, 1, 17, 34,
+            34, 33, 0, 0, 1, 17, 34, 34, 34, 34, 34, 34, 34, 34,
+            51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 50, 51, 51,
+            51, 51, 51, 51, 50, 51, 51, 51, 51, 53, 155, 115, 34, 35,
+            51, 51, 53, 155, 115, 34, 35, 50, 52, 121, 152, 100, 34, 35,
+            34, 52, 121, 152, 100, 34, 35, 35, 136, 84, 121, 100, 34, 36,
+            35, 137, 84, 121, 100, 34, 52, 52, 155, 171, 204, 202, 66, 36,
+            52, 138, 171, 204, 202, 66, 35, 51, 33, 1, 105, 100, 16, 35,
+            51, 33, 1, 89, 99, 16, 35, 51, 51, 51, 68, 50, 17, 35,
+            51, 51, 51, 51, 33, 18, 51, 51, 51, 51, 51, 33, 34, 51,
+            51, 51, 51, 51, 33, 34, 51, 51, 51, 51, 51, 51, 51, 51,
+            17, 17, 34, 34, 34, 17, 17, 18, 54, 155, 186, 116, 33, 17,
+            18, 70, 155, 186, 116, 33, 18, 18, 121, 66, 34, 33, 0, 18,
+            18, 121, 66, 17, 17, 0, 18, 18, 121, 100, 50, 17, 17, 18,
+            18, 121, 100, 50, 17, 17, 18, 18, 52, 103, 153, 117, 49, 34,
+            18, 52, 103, 153, 118, 50, 34, 18, 33, 16, 2, 122, 48, 18,
+            17, 33, 16, 2, 122, 48, 18, 17, 35, 34, 52, 119, 32, 18,
+            17, 35, 34, 52, 102, 32, 18, 18, 87, 153, 134, 32, 0, 18,
+            18, 87, 153, 133, 32, 0, 18, 34, 33, 0, 0, 0, 18, 34,
+            34, 33, 0, 0, 0, 18, 34, 34, 34, 34, 34, 34, 34, 34,
+            35, 51, 51, 51, 51, 51, 51, 51, 51, 35, 70, 119, 66, 34,
+            51, 51, 35, 70, 119, 66, 34, 34, 52, 137, 100, 50, 17, 34,
+            35, 52, 137, 100, 50, 17, 34, 35, 69, 103, 84, 50, 34, 34,
+            35, 69, 103, 84, 50, 34, 34, 36, 120, 153, 135, 153, 117, 67,
+            36, 120, 153, 119, 153, 117, 67, 36, 103, 100, 32, 3, 137, 49,
+            36, 103, 100, 16, 3, 137, 49, 35, 52, 121, 82, 53, 118, 32,
+            35, 52, 120, 83, 69, 118, 32, 35, 51, 69, 137, 133, 32, 0,
+            35, 51, 69, 137, 133, 32, 0, 51, 51, 51, 33, 0, 0, 35,
+            51, 51, 51, 33, 0, 0, 34, 51, 51, 51, 51, 51, 51, 51,
+            34, 34, 34, 34, 34, 34, 34, 34, 123, 187, 186, 116, 34, 34,
+            34, 123, 187, 186, 116, 50, 34, 34, 51, 68, 87, 154, 81, 18,
+            34, 35, 68, 87, 154, 81, 18, 34, 34, 17, 88, 116, 16, 2,
+            34, 34, 17, 88, 99, 16, 18, 34, 34, 34, 105, 80, 1, 18,
+            34, 34, 35, 104, 64, 1, 18, 34, 34, 104, 99, 16, 18, 34,
+            18, 35, 104, 99, 16, 18, 34, 18, 35, 105, 65, 1, 34, 34,
+            18, 35, 104, 64, 1, 34, 34, 18, 68, 50, 16, 18, 34, 35,
+            18, 52, 50, 16, 18, 34, 35, 35, 51, 33, 18, 35, 51, 51,
+            35, 51, 33, 18, 35, 51, 51, 51, 51, 51, 51, 51, 51, 51,
+            0, 0, 1, 16, 0, 0, 0, 0, 1, 53, 117, 33, 0, 0,
+            17, 17, 53, 117, 33, 0, 0, 3, 102, 84, 38, 166, 16, 0,
+            3, 102, 100, 38, 166, 17, 0, 3, 119, 116, 20, 150, 16, 0,
+            3, 119, 116, 20, 150, 16, 0, 0, 22, 172, 186, 148, 0, 0,
+            0, 21, 171, 186, 148, 0, 0, 21, 150, 16, 4, 152, 82, 0,
+            21, 166, 16, 4, 152, 82, 0, 21, 152, 99, 20, 151, 65, 0,
+            20, 152, 99, 36, 134, 49, 0, 17, 20, 137, 151, 66, 0, 0,
+            17, 20, 137, 151, 65, 0, 0, 34, 34, 33, 0, 0, 17, 34,
+            34, 34, 33, 0, 0, 17, 34, 51, 34, 34, 34, 34, 34, 34,
+            68, 68, 68, 67, 51, 50, 17, 68, 52, 102, 101, 67, 17, 16,
+            68, 68, 102, 101, 67, 17, 17, 70, 152, 85, 88, 168, 33, 17,
+            54, 168, 69, 88, 168, 33, 33, 54, 150, 0, 37, 151, 32, 17,
+            54, 150, 0, 21, 151, 32, 17, 54, 153, 118, 55, 168, 49, 17,
+            54, 169, 118, 71, 168, 49, 1, 51, 54, 188, 187, 183, 16, 17,
+            67, 54, 187, 187, 183, 16, 17, 67, 50, 20, 120, 150, 16, 17,
+            68, 50, 20, 120, 134, 0, 17, 68, 87, 154, 182, 32, 1, 50,
+            68, 87, 154, 182, 33, 1, 50, 68, 68, 33, 0, 1, 52, 68,
+            68, 67, 33, 0, 1, 52, 68, 68, 68, 68, 68, 68, 68, 68,
+        };
 
         private static readonly float[] Templates = LoadTemplates();
 
@@ -206,7 +269,7 @@ namespace BgaSpnfdr
                 float best = float.MinValue;
                 int digit = 0;
 #if NETFRAMEWORK
-                // .NET Framework (Windows side-by-side test build): no in-box SIMD
+                // .NET Framework (the Windows build) has no in-box SIMD
                 for (int d = 0, o = 0; d < 10; d++, o += Pixels)
                 {
                     float dot = 0;
@@ -299,7 +362,9 @@ namespace BgaSpnfdr
         /// length, so a dot product with a window is its correlation.</summary>
         private static float[] LoadTemplates()
         {
-            byte[] raw = Convert.FromBase64String(TemplateData);
+            var raw = new byte[10 * Pixels];
+            for (int i = 0; i < raw.Length; i++)
+                raw[i] = (byte)((TemplateData[i >> 1] >> ((i & 1) == 0 ? 4 : 0) & 15) * 17);
             var t = new float[raw.Length];
             for (int d = 0; d < 10; d++)
             {

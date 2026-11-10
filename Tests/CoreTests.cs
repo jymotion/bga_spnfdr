@@ -4,31 +4,6 @@ using Xunit;
 
 namespace BgaSpnfdr.Tests
 {
-    public class ScoreParserTests
-    {
-        [Theory]
-        [InlineData("273850", "273850")]
-        [InlineData("47987S", "479875")]          // 5 read as S
-        [InlineData("Z7385O", "273850")]          // 2 as Z, 0 as O
-        [InlineData("4g8U2s", "498025")]          // 9 as g, 0 as U, 5 as s
-        [InlineData("l0rB", "1078")]              // 1 as l, 7 as r, 8 as B
-        [InlineData(" '27 3850.", "273850")]      // stray punctuation/spaces
-        [InlineData("", "")]
-        public void MapsLookalikesBackToDigits(string text, string expected)
-        {
-            Assert.Equal(expected, ScoreParser.Normalize(text));
-        }
-
-        [Theory]
-        [InlineData("47987#")]
-        [InlineData("k273850")]
-        public void RejectsReadsWithUnmappableCharacters(string text)
-        {
-            // dropping the bad character would silently give a wrong number
-            Assert.Null(ScoreParser.Normalize(text));
-        }
-    }
-
     public class ScoreTrackerTests
     {
         private static readonly Dictionary<long, string> Route = new Dictionary<long, string>
@@ -37,8 +12,7 @@ namespace BgaSpnfdr.Tests
             [468025] = "note B",
         };
 
-        /// <summary>One frame where both OCR variants read the same text.</summary>
-        private static string Frame(ScoreTracker t, string read) => t.HandleReads(read, read, Route);
+        private static string Frame(ScoreTracker t, string read) => t.HandleRead(read, Route);
 
         private static ScoreTracker ConfirmedAt(string score)
         {
@@ -62,25 +36,10 @@ namespace BgaSpnfdr.Tests
         [InlineData("03850")]   // leading zero = fragment of a longer number
         [InlineData("1000000")] // 7 digits
         [InlineData("273851")]  // not a multiple of 25
+        [InlineData("47987#")]  // not just digits
         public void RejectsImplausibleReads(string read)
         {
             Assert.Null(new ScoreTracker().ValidCandidate(read));
-        }
-
-        [Fact]
-        public void SkipsFrameWhenVariantsDisagree()
-        {
-            var t = new ScoreTracker();
-            Assert.Null(t.HandleReads("273850", "273875", Route));
-            Assert.Equal("ambiguous read (273850 vs 273875) — skipped", t.Status);
-        }
-
-        [Fact]
-        public void OneReadableVariantIsEnough()
-        {
-            var t = new ScoreTracker();
-            t.HandleReads("273850", "", Route);
-            Assert.Equal("note A", t.HandleReads("", "273850", Route));
         }
 
         [Fact]
@@ -100,10 +59,10 @@ namespace BgaSpnfdr.Tests
         [Fact]
         public void HugeJumpNeedsFiveReads()
         {
-            // junk-prefix read: "77 3sso" for 273850
+            // junk-prefix read: an extra digit in front of 273850's tail
             var t = ConfirmedAt("273850");
-            Frame(t, "77 3sso");
-            Frame(t, "77 3sso");
+            Frame(t, "773550");
+            Frame(t, "773550");
             Assert.Equal("reading 773550 (2/5)", t.Status);
         }
 

@@ -2,16 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace BgaSpnfdr
 {
     public class MainForm : Form
     {
-        // BattleTanx constants and the OCR safeguards live in Core/ (shared
-        // with the Linux build): BattleTanx.cs, ScoreTracker.cs, ScoreParser.cs.
+        // The score reader and its safeguards live in Core/ (shared with the
+        // Linux build): DigitReader.cs, ScoreBand.cs, ScoreTracker.cs,
+        // BattleTanx.cs.
 
         // ----- auto-crop -----
         private const int AutoCropFramesInitial = 40; // ~4s after selecting a window
@@ -19,7 +22,7 @@ namespace BgaSpnfdr
 
         private readonly AppSettings _settings;
         private readonly WindowCapture _windowCapture = new WindowCapture();
-        private readonly OcrReader _ocr = new OcrReader();
+        private readonly DigitReader _reader = new DigitReader();
         private WindowPicker _picker;
         private NotesForm _notesForm;
 
@@ -44,12 +47,10 @@ namespace BgaSpnfdr
 
         private Dictionary<long, string> _scoreTable = new Dictionary<long, string>();
 
-        private bool _ocrBusy;
         private readonly ScoreTracker _tracker = new ScoreTracker();
-#if SIDE_BY_SIDE
-        private readonly SideBySide _sideBySide = new SideBySide();
-        private double _ocrPrepMs;
-#endif
+        private readonly byte[] _band = new byte[ScoreBand.Width * ScoreBand.Rows];
+        private byte[] _bandRows = new byte[0]; // capture rows under the band
+        private Rectangle _readCrop;             // crop the reader is calibrated for
 
         public MainForm()
         {
@@ -431,10 +432,7 @@ namespace BgaSpnfdr
             if (_detector != null)
                 FeedAutoCrop();
 
-            StartOcrIfReady();
-#if SIDE_BY_SIDE
-            _sideBySide.OnFrame(_capture, _settings.Crop, _tracker.Confirmed);
-#endif
+            ReadScore();
 
             // while picking a window, the status bar shows the pick prompt —
             // don't stomp it every tick (sticky messages get a few seconds)
@@ -445,11 +443,7 @@ namespace BgaSpnfdr
             }
             else if (!_picker.Active)
             {
-#if SIDE_BY_SIDE
-                _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus : _sideBySide.Summary;
-#else
                 _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus : _tracker.Status;
-#endif
             }
         }
 
@@ -467,83 +461,41 @@ namespace BgaSpnfdr
                 Math.Max(1, (int)(BattleTanx.ScoreFraction.Height * crop.Height)));
         }
 
-        // ---------- OCR ----------
+        // ---------- reading the score ----------
 
-        private void StartOcrIfReady()
+        /// <summary>Reads the score from the newest capture with the digit
+        /// reader and feeds the safeguards (Core/ScoreTracker). About 1 ms.</summary>
+        private void ReadScore()
         {
-            if (!_ocr.Available)
+            var crop = _settings.Crop;
+            if (_capture == null || crop.Width <= 0 || crop.Height <= 0)
+                return;
+            if (crop != _readCrop)
             {
-                _tracker.Status = "OCR unavailable (no Windows OCR language installed)";
-                return;
+                _reader.Reset(); // re-find the band's exact rows for the new crop
+                _readCrop = crop;
             }
-            if (_ocrBusy || _capture == null)
+            ScoreBand.RowsNeeded(crop, _capture.Height, out int first, out int last);
+            if (last < first)
                 return;
-            var region = Rectangle.Intersect(ScoreRegion(), new Rectangle(Point.Empty, _capture.Size));
-            if (region.Width < 8 || region.Height < 8)
-                return;
-
-            _ocrBusy = true;
-            // prepared synchronously, so the capture buffer can't be re-rendered
-            // under us. Two variants: binarized and plain color — each reads
-            // frames the other fails on.
-#if SIDE_BY_SIDE
-            var prep = System.Diagnostics.Stopwatch.StartNew();
-#endif
-            Bitmap binarized = ScoreImage.PrepareBinarized(_capture, region);
-            Bitmap color = ScoreImage.PrepareColor(_capture, region);
-#if SIDE_BY_SIDE
-            _ocrPrepMs = prep.Elapsed.TotalMilliseconds;
-#endif
-            RunOcrAsync(binarized, color);
-        }
-
-        private async void RunOcrAsync(Bitmap binarized, Bitmap color)
-        {
+            var data = _capture.LockBits(new Rectangle(0, first, _capture.Width, last - first + 1),
+                ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
             try
             {
-#if SIDE_BY_SIDE
-                var ocrTime = System.Diagnostics.Stopwatch.StartNew();
-#endif
-                string textBin = await _ocr.ReadAsync(binarized);
-                // the engine is flaky about scale on this font: if the clean
-                // binarized image gave nothing usable, retry it resized
-                if (_tracker.ValidCandidate(textBin) == null)
-                {
-                    foreach (float s in new[] { 0.5f, 1.5f })
-                    {
-                        using (var scaled = new Bitmap(binarized,
-                                   (int)(binarized.Width * s), (int)(binarized.Height * s)))
-                        {
-                            string retry = await _ocr.ReadAsync(scaled);
-                            if (_tracker.ValidCandidate(retry) != null)
-                            {
-                                textBin = retry;
-                                break;
-                            }
-                        }
-                    }
-                }
-                string textColor = await _ocr.ReadAsync(color);
-#if SIDE_BY_SIDE
-                double ocrMs = ocrTime.Elapsed.TotalMilliseconds;
-#endif
-                string note = _tracker.HandleReads(textBin, textColor, _scoreTable);
-#if SIDE_BY_SIDE
-                _sideBySide.OnOcr(textBin, textColor, _ocrPrepMs, ocrMs, _tracker.Confirmed);
-#endif
-                if (note != null)
-                    _notesForm.SetNote(note);
-            }
-            catch (Exception ex)
-            {
-                _tracker.Status = "OCR error: " + ex.Message;
+                int n = data.Stride * (last - first + 1);
+                if (_bandRows.Length < n)
+                    _bandRows = new byte[n];
+                Marshal.Copy(data.Scan0, _bandRows, 0, n);
+                ScoreBand.Fill(_bandRows, data.Stride, first, last, _capture.Width, crop, false, _band);
             }
             finally
             {
-                binarized.Dispose();
-                color.Dispose();
-                _ocrBusy = false;
+                _capture.UnlockBits(data);
             }
+            string read = _reader.Read(_band, ScoreBand.Width, ScoreBand.Rows);
+            string note = _tracker.HandleRead(read, _scoreTable);
+            if (note != null)
+                _notesForm.SetNote(note);
         }
 
         // ---------- painting & coordinate mapping ----------
@@ -640,7 +592,7 @@ namespace BgaSpnfdr
         {
             // once configured, the setup window isn't needed: closing it just
             // hides it while the notes window is up (right-click the notes
-            // window to bring it back or exit). Capture and OCR keep running.
+            // window to bring it back or exit). Capture and reading keep running.
             if (e.CloseReason == CloseReason.UserClosing && _notesForm != null && _notesForm.Visible)
             {
                 e.Cancel = true;
