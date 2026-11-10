@@ -51,6 +51,9 @@ namespace BgaSpnfdr
         private readonly byte[] _band = new byte[ScoreBand.Width * ScoreBand.Rows];
         private byte[] _bandRows = new byte[0]; // capture rows under the band
         private Rectangle _readCrop;             // crop the reader is calibrated for
+#if PERF_TEST
+        private readonly PerfTest _perf = new PerfTest();
+#endif
 
         public MainForm()
         {
@@ -98,6 +101,9 @@ namespace BgaSpnfdr
             UpdateButtonLabels();
 
             _timer = new Timer { Interval = 100 };
+#if PERF_TEST
+            _timer.Interval = _perf.Interval;
+#endif
             _timer.Tick += (s, e) => CaptureFrame();
             _timer.Start();
         }
@@ -416,7 +422,15 @@ namespace BgaSpnfdr
             if (_targetWindow == IntPtr.Zero)
                 return;
 
+#if PERF_TEST
+            var captureTime = System.Diagnostics.Stopwatch.StartNew();
+#endif
             var bmp = _windowCapture.Capture(_targetWindow);
+#if PERF_TEST
+            _perf.OnCapture(captureTime.Elapsed.TotalMilliseconds, bmp);
+            if (_perf.Tick(Visible))
+                _timer.Interval = _perf.Interval;
+#endif
             if (bmp == null)
             {
                 if (!_picker.Active)
@@ -426,24 +440,42 @@ namespace BgaSpnfdr
                 return;
             }
             _capture = bmp;
+#if PERF_TEST
+            var readTime = System.Diagnostics.Stopwatch.StartNew();
+            ReadScore();
+            _perf.OnRead(readTime.Elapsed.TotalMilliseconds, _tracker.Confirmed);
+            // everything else stays at ~10 a second, as in the normal build
+            if (!_perf.SideTasksDue())
+                return;
+#endif
             if (_previewBox.Visible && Visible)
                 _previewBox.Invalidate();
 
             if (_detector != null)
                 FeedAutoCrop();
 
+#if !PERF_TEST
             ReadScore();
+#endif
 
             // while picking a window, the status bar shows the pick prompt —
             // don't stomp it every tick (sticky messages get a few seconds)
             if (_detector != null)
             {
+#if PERF_TEST
+                int seconds = (_detector.FramesLeft * 100 + 999) / 1000;
+#else
                 int seconds = (_detector.FramesLeft * _timer.Interval + 999) / 1000;
+#endif
                 _statusLabel.Text = $"Auto-detecting the game feed… {seconds}s";
             }
             else if (!_picker.Active)
             {
+#if PERF_TEST
+                _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus : _tracker.Status + "  ·  " + _perf.Summary;
+#else
                 _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus : _tracker.Status;
+#endif
             }
         }
 

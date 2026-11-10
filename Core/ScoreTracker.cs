@@ -35,6 +35,11 @@ namespace BgaSpnfdr
         /// host app may overwrite it.</summary>
         public string Status = "Waiting for the score";
 
+#if PERF_TEST
+        /// <summary>Windows 30-reads-a-second test build only.</summary>
+        public long Confirmed => _confirmedScore;
+#endif
+
         /// <summary>Returns the read if it passes every sanity check,
         /// otherwise null (with the reason in Status).</summary>
         public string ValidCandidate(string read)

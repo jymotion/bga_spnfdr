@@ -20,6 +20,15 @@
     <Reference Include="Microsoft.VisualBasic" />
   </ItemGroup>
 
+  <!-- 30-reads-a-second test build (dotnet build ... -p:PerfTest=true): reads
+       like the Linux build (30/s, 3-read rule), alternating with 10/s each
+       minute, and logs CPU and timings. The normal build is unaffected (the
+       extra code is compiled out). -->
+  <PropertyGroup Condition="'$(PerfTest)' == 'true'">
+    <DefineConstants>$(DefineConstants);PERF_TEST;READ_EVERY_FRAME</DefineConstants>
+    <AssemblyName>bga_spnfdr_30fps_test</AssemblyName>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- Platform-neutral logic shared with the Linux build, compiled straight
          into this exe (no extra DLL). This project only ever sees Windows/
