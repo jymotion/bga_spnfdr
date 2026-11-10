@@ -38,6 +38,11 @@ namespace BgaSpnfdr
         /// app may overwrite it (e.g. with OCR engine errors).</summary>
         public string Status = "OCR idle";
 
+#if SIDE_BY_SIDE
+        /// <summary>Side-by-side test builds only: the confirmed score.</summary>
+        public long Confirmed => _confirmedScore;
+#endif
+
         /// <summary>Returns the digit string if this read passes every sanity
         /// check, otherwise null (with the reason in Status).</summary>
         public string ValidCandidate(string text)

@@ -1,5 +1,7 @@
 using System;
+#if !NETFRAMEWORK
 using System.Numerics;
+#endif
 
 namespace BgaSpnfdr
 {
@@ -203,6 +205,14 @@ namespace BgaSpnfdr
                 // templates are zero-mean, so the window's mean drops out
                 float best = float.MinValue;
                 int digit = 0;
+#if NETFRAMEWORK
+                // .NET Framework (Windows side-by-side test build): no in-box SIMD
+                for (int d = 0, o = 0; d < 10; d++, o += Pixels)
+                {
+                    float dot = 0;
+                    for (int i = 0; i < Pixels; i++)
+                        dot += Templates[o + i] * _window[i];
+#else
                 int lanes = Vector<float>.Count;
                 for (int d = 0, o = 0; d < 10; d++, o += Pixels)
                 {
@@ -213,6 +223,7 @@ namespace BgaSpnfdr
                     float dot = Vector.Dot(acc, Vector<float>.One);
                     for (; i < Pixels; i++)
                         dot += Templates[o + i] * _window[i];
+#endif
                     if (dot > best)
                     {
                         best = dot;

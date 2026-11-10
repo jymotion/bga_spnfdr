@@ -46,6 +46,10 @@ namespace BgaSpnfdr
 
         private bool _ocrBusy;
         private readonly ScoreTracker _tracker = new ScoreTracker();
+#if SIDE_BY_SIDE
+        private readonly SideBySide _sideBySide = new SideBySide();
+        private double _ocrPrepMs;
+#endif
 
         public MainForm()
         {
@@ -428,6 +432,9 @@ namespace BgaSpnfdr
                 FeedAutoCrop();
 
             StartOcrIfReady();
+#if SIDE_BY_SIDE
+            _sideBySide.OnFrame(_capture, _settings.Crop, _tracker.Confirmed);
+#endif
 
             // while picking a window, the status bar shows the pick prompt —
             // don't stomp it every tick (sticky messages get a few seconds)
@@ -438,7 +445,11 @@ namespace BgaSpnfdr
             }
             else if (!_picker.Active)
             {
+#if SIDE_BY_SIDE
+                _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus : _sideBySide.Summary;
+#else
                 _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus : _tracker.Status;
+#endif
             }
         }
 
@@ -475,8 +486,14 @@ namespace BgaSpnfdr
             // prepared synchronously, so the capture buffer can't be re-rendered
             // under us. Two variants: binarized and plain color — each reads
             // frames the other fails on.
+#if SIDE_BY_SIDE
+            var prep = System.Diagnostics.Stopwatch.StartNew();
+#endif
             Bitmap binarized = ScoreImage.PrepareBinarized(_capture, region);
             Bitmap color = ScoreImage.PrepareColor(_capture, region);
+#if SIDE_BY_SIDE
+            _ocrPrepMs = prep.Elapsed.TotalMilliseconds;
+#endif
             RunOcrAsync(binarized, color);
         }
 
@@ -484,6 +501,9 @@ namespace BgaSpnfdr
         {
             try
             {
+#if SIDE_BY_SIDE
+                var ocrTime = System.Diagnostics.Stopwatch.StartNew();
+#endif
                 string textBin = await _ocr.ReadAsync(binarized);
                 // the engine is flaky about scale on this font: if the clean
                 // binarized image gave nothing usable, retry it resized
@@ -504,7 +524,13 @@ namespace BgaSpnfdr
                     }
                 }
                 string textColor = await _ocr.ReadAsync(color);
+#if SIDE_BY_SIDE
+                double ocrMs = ocrTime.Elapsed.TotalMilliseconds;
+#endif
                 string note = _tracker.HandleReads(textBin, textColor, _scoreTable);
+#if SIDE_BY_SIDE
+                _sideBySide.OnOcr(textBin, textColor, _ocrPrepMs, ocrMs, _tracker.Confirmed);
+#endif
                 if (note != null)
                     _notesForm.SetNote(note);
             }

@@ -1,0 +1,50 @@
+# Builds every app on each push; the files are downloadable from the run's
+# page (Actions tab -> the run -> Artifacts).
+name: Build
+
+on:
+  push:
+    branches: [ main, 'claude/**' ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Tests (shared Core code)
+        run: dotnet test Tests -c Release
+      - name: Windows app
+        run: dotnet build Windows/bga_spnfdr.csproj -c Release -o out/windows
+      - name: Windows side-by-side test build (Windows OCR + digit reader, logged)
+        run: dotnet build Windows/bga_spnfdr.csproj -c Release -p:SideBySide=true --no-incremental -o out/sidebyside
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bga_spnfdr-windows
+          path: out/windows/bga_spnfdr.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bga_spnfdr-windows-sidebyside-test
+          path: out/sidebyside/bga_spnfdr_sidebyside.exe
+
+  linux:
+    # built on the oldest supported Ubuntu so the program runs on as many
+    # distros as possible (needs glibc 2.34+)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Native build tools
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+      - name: Linux app
+        run: dotnet publish Linux/bga_spnfdr.csproj -c Release -o out/linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bga_spnfdr-linux-x64
+          path: out/linux/bga_spnfdr
