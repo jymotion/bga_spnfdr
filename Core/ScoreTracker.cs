@@ -61,6 +61,10 @@ namespace BgaSpnfdr
         /// read.</summary>
         public bool WantStatus = true;
 
+        /// <summary>After HandleRead: this frame's read was the score that
+        /// stands (so where its digits were found can be trusted).</summary>
+        public bool ReadStands;
+
 #if PERF_TEST
         /// <summary>Windows 30-reads-a-second test build only.</summary>
         public long Confirmed => _confirmedScore;
@@ -108,6 +112,7 @@ namespace BgaSpnfdr
         /// DigitReader.LeftMatch for this read.</summary>
         public string HandleRead(string read, Dictionary<long, string> route, float leftMatch = 0)
         {
+            ReadStands = false;
             string candidate = ValidCandidate(read);
 
             // Safeguard: a lower value with signs of another digit in front
@@ -155,6 +160,7 @@ namespace BgaSpnfdr
                 return null;
             }
 
+            ReadStands = true;
             string note = null;
             if (score != _confirmedScore)
             {

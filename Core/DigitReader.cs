@@ -49,7 +49,7 @@ namespace BgaSpnfdr
         // Tuned on the reference run: 0.6 keeps the misreads one-off (the
         // safeguards reject them); higher values drop leading digits for
         // whole stretches, and two such fragments got confirmed at 0.7.
-        private const float MatchThreshold = 0.6f;
+        public const float MatchThreshold = 0.6f;
         private const int MinStep = 9, MaxStep = 15; // px between digit starts
 
         private const int Pixels = BandHeight * GlyphWidth;
@@ -158,7 +158,14 @@ namespace BgaSpnfdr
             68, 67, 33, 0, 1, 52, 68, 68, 68, 68, 68, 68, 68, 68,
         };
 
-        private static readonly float[] Templates = LoadTemplates();
+        private static readonly float[] Templates = LoadTemplates(1);
+
+        // every other row and column of the templates, for QuickLook; a
+        // window must match one this well there to be looked at in full
+        private const int QuickPixels = (BandHeight + 1) / 2 * ((GlyphWidth + 1) / 2);
+        private const float QuickMatch = 0.4f;
+        private static readonly float[] QuickTemplates = LoadTemplates(2);
+        private readonly float[] _quick = new float[QuickPixels];
 
         private float[] _best = Array.Empty<float>();
         private int[] _digit = Array.Empty<int>();
@@ -176,6 +183,20 @@ namespace BgaSpnfdr
         /// does not. ScoreTracker uses it to reject such fragments.</summary>
         public float LeftMatch;
 
+        /// <summary>After Read or Scan, about the digits returned: the
+        /// vertical offset they were found at (-1 if none), the band columns
+        /// of the first and last digit's left edge, and the chain's total
+        /// (each digit's match minus MatchThreshold, summed). Core/ScoreFinder
+        /// uses them to work out where and how big the score is.</summary>
+        public int FoundOffset, FoundFirst, FoundLast;
+        public float FoundGain;
+
+        /// <summary>After Read or Scan: where each digit returned sits, as
+        /// the band column of its left edge, to a fraction of a pixel (from
+        /// how well it matches one column to either side).</summary>
+        public readonly float[] FoundX = new float[32];
+
+        private int _positions; // horizontal positions in the band being read
         private int _lockedOffset = -1;
         private int _candidate = -1;
         private int _candidateVotes;
@@ -198,6 +219,8 @@ namespace BgaSpnfdr
         public string Read(byte[] band, int width, int height)
         {
             LeftMatch = 0;
+            FoundOffset = -1;
+            FoundGain = 0;
             int nx = width - GlyphWidth + 1;
             if (nx <= 0 || height < BandHeight || band.Length < width * height)
                 return "";
@@ -205,24 +228,18 @@ namespace BgaSpnfdr
             int offsets = height - BandHeight + 1;
             if (_lockedOffset >= 0 && _lockedOffset < offsets && ++_frame % RecheckEvery != 0)
             {
-                float score = ReadAt(band, _lockedOffset * width, width, nx, out int end);
-                return score > 0 ? ChainText(end) : "";
+                float score = ReadAt(band, _lockedOffset * width, width, nx, 0, out int end);
+                if (score <= 0)
+                    return "";
+                FoundOffset = _lockedOffset;
+                FoundGain = score;
+                return ChainText(end);
             }
 
             // full search: until calibrated, then every RecheckEvery frames
-            string best = "";
-            float bestScore = 0;
-            int bestOffset = -1;
-            for (int dy = 0; dy < offsets; dy++)
-            {
-                float score = ReadAt(band, dy * width, width, nx, out int end);
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    bestOffset = dy;
-                    best = ChainText(end);
-                }
-            }
+            string best = Search(band, width, nx, offsets, 0);
+            float bestScore = FoundGain;
+            int bestOffset = FoundOffset;
             // only a confident read votes: while the score is hidden, stray
             // weak matches on some other row would otherwise win the lock
             // and the real score go unread there once it is back
@@ -241,9 +258,42 @@ namespace BgaSpnfdr
             return best;
         }
 
+        /// <summary>Like Read, but always tries every vertical offset and
+        /// neither uses nor changes the calibrated one: for looking for the
+        /// score in a strip of any height (Core/ScoreFinder). Windows whose
+        /// brightness varies less than minSpread (summed squared deviation)
+        /// are skipped: digits are white on a dark shadow, never flat.</summary>
+        public string Scan(byte[] band, int width, int height, double minSpread)
+        {
+            LeftMatch = 0;
+            FoundOffset = -1;
+            FoundGain = 0;
+            int nx = width - GlyphWidth + 1;
+            if (nx <= 0 || height < BandHeight || band.Length < width * height)
+                return "";
+            EnsureBuffers(width, nx);
+            return Search(band, width, nx, height - BandHeight + 1, minSpread);
+        }
+
+        private string Search(byte[] band, int width, int nx, int offsets, double minSpread)
+        {
+            string best = "";
+            for (int dy = 0; dy < offsets; dy++)
+            {
+                float score = ReadAt(band, dy * width, width, nx, minSpread, out int end);
+                if (score > FoundGain)
+                {
+                    FoundGain = score;
+                    FoundOffset = dy;
+                    best = ChainText(end);
+                }
+            }
+            return best;
+        }
+
         /// <summary>Scores one vertical offset; returns the best chain's
         /// total (0 = nothing) and where it ends.</summary>
-        private float ReadAt(byte[] band, int start, int width, int nx, out int end)
+        private float ReadAt(byte[] band, int start, int width, int nx, double minSpread, out int end)
         {
 
             // per-column sums for each window's mean and spread
@@ -269,7 +319,13 @@ namespace BgaSpnfdr
                     sq += _colSq[x + c];
                 }
                 double spread = sq - sum * sum / Pixels; // sum of squared deviations
-                if (spread < 1e-3)
+                if (spread < 1e-3 || spread < minSpread)
+                {
+                    _best[x] = 0;
+                    _digit[x] = 0;
+                    continue;
+                }
+                if (minSpread > 0 && !QuickLook(band, start + x, width))
                 {
                     _best[x] = 0;
                     _digit[x] = 0;
@@ -348,6 +404,47 @@ namespace BgaSpnfdr
             return endAcc;
         }
 
+        /// <summary>Scan's first look at a window: the same match on every
+        /// other row and column only, a quarter of the work. False if no
+        /// digit comes close; then the window isn't looked at in full. (Not
+        /// used when reading: Read matches every window in full.)</summary>
+        private bool QuickLook(byte[] band, int at, int width)
+        {
+            float sum = 0, sq = 0;
+            int k = 0;
+            for (int y = 0, row = at; y < BandHeight; y += 2, row += 2 * width)
+                for (int c = 0; c < GlyphWidth; c += 2)
+                {
+                    float v = band[row + c];
+                    _quick[k++] = v;
+                    sum += v;
+                    sq += v * v;
+                }
+            float spread = sq - sum * sum / QuickPixels;
+            if (spread < 1e-3f)
+                return false;
+            float best = float.MinValue;
+            for (int d = 0, o = 0; d < 10; d++, o += QuickPixels)
+            {
+#if NETFRAMEWORK
+                float dot = 0;
+                for (int i = 0; i < QuickPixels; i++)
+                    dot += QuickTemplates[o + i] * _quick[i];
+#else
+                int lanes = Vector<float>.Count, i = 0;
+                var acc = Vector<float>.Zero;
+                for (; i <= QuickPixels - lanes; i += lanes)
+                    acc += new Vector<float>(QuickTemplates, o + i) * new Vector<float>(_quick, i);
+                float dot = Vector.Dot(acc, Vector<float>.One);
+                for (; i < QuickPixels; i++)
+                    dot += QuickTemplates[o + i] * _quick[i];
+#endif
+                if (dot > best)
+                    best = dot;
+            }
+            return best * best >= QuickMatch * QuickMatch * spread && best > 0;
+        }
+
         private string ChainText(int end)
         {
             int n = 0, first = end;
@@ -361,12 +458,27 @@ namespace BgaSpnfdr
                 if (_best[x] > left)
                     left = _best[x];
             LeftMatch = left;
+            FoundFirst = first;
+            FoundLast = end;
+            for (int x = end, i = n - 1; i >= 0; x = _prev[x], i--)
+            {
+                // the top of a parabola through the match here and beside it
+                float shift = 0;
+                if (x > 0 && x < _positions - 1)
+                {
+                    float l = _best[x - 1], c = _best[x], r = _best[x + 1], bend = l - 2 * c + r;
+                    if (bend < 0)
+                        shift = Math.Max(-0.5f, Math.Min(0.5f, 0.5f * (l - r) / bend));
+                }
+                FoundX[i] = x + shift;
+            }
             Array.Reverse(_text, 0, n);
             return new string(_text, 0, n);
         }
 
         private void EnsureBuffers(int width, int nx)
         {
+            _positions = nx;
             if (_best.Length < nx)
             {
                 _best = new float[nx];
@@ -381,27 +493,33 @@ namespace BgaSpnfdr
             }
         }
 
-        /// <summary>Decodes the templates and makes each zero-mean with unit
-        /// length, so a dot product with a window is its correlation.</summary>
-        private static float[] LoadTemplates()
+        /// <summary>Decodes the templates (every step-th row and column of
+        /// them) and makes each zero-mean with unit length, so a dot product
+        /// with a window is its correlation.</summary>
+        private static float[] LoadTemplates(int step)
         {
-            var raw = new byte[10 * Pixels];
-            for (int i = 0; i < raw.Length; i++)
-                raw[i] = (byte)((TemplateData[i >> 1] >> ((i & 1) == 0 ? 4 : 0) & 15) * 17);
-            var t = new float[raw.Length];
+            int n = (BandHeight + step - 1) / step * ((GlyphWidth + step - 1) / step);
+            var t = new float[10 * n];
+            var raw = new double[n];
             for (int d = 0; d < 10; d++)
             {
-                int o = d * Pixels;
+                int k = 0;
+                for (int y = 0; y < BandHeight; y += step)
+                    for (int c = 0; c < GlyphWidth; c += step)
+                    {
+                        int i = d * Pixels + y * GlyphWidth + c;
+                        raw[k++] = (TemplateData[i >> 1] >> ((i & 1) == 0 ? 4 : 0) & 15) * 17;
+                    }
                 double mean = 0;
-                for (int i = 0; i < Pixels; i++)
-                    mean += raw[o + i];
-                mean /= Pixels;
+                for (int i = 0; i < n; i++)
+                    mean += raw[i];
+                mean /= n;
                 double norm = 0;
-                for (int i = 0; i < Pixels; i++)
-                    norm += (raw[o + i] - mean) * (raw[o + i] - mean);
+                for (int i = 0; i < n; i++)
+                    norm += (raw[i] - mean) * (raw[i] - mean);
                 norm = Math.Sqrt(norm);
-                for (int i = 0; i < Pixels; i++)
-                    t[o + i] = (float)((raw[o + i] - mean) / norm);
+                for (int i = 0; i < n; i++)
+                    t[d * n + i] = (float)((raw[i] - mean) / norm);
             }
             return t;
         }

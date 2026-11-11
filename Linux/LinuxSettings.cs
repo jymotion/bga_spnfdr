@@ -16,6 +16,7 @@ namespace BgaSpnfdr
         public string RestoreToken = string.Empty;  // reuses the shared window without prompting
         public Rectangle Crop = Rectangle.Empty;    // game picture, in captured-frame pixels
         public Size CropFrameSize = Size.Empty;     // frame size the crop was made for
+        public bool CropVerified;                   // the score has been found in it (Core/GameFinder)
         public string CsvPath = string.Empty;
         public string NotesFont = "Sans Bold 48";
         public string NotesTextColor = "#ffffff";
@@ -53,6 +54,7 @@ namespace BgaSpnfdr
                         var r = ParseRect(value + ",0,0", Rectangle.Empty);
                         s.CropFrameSize = new Size(r.X, r.Y);
                         break;
+                    case "CropVerified": if (bool.TryParse(value, out bool verified)) s.CropVerified = verified; break;
                     case "Csv": s.CsvPath = value; break;
                     case "NotesFont": if (value.Length > 0) s.NotesFont = value; break;
                     case "NotesTextColor": if (IsColor(value)) s.NotesTextColor = value; break;
@@ -78,6 +80,7 @@ namespace BgaSpnfdr
                     "RestoreToken=" + RestoreToken,
                     $"Crop={Crop.X},{Crop.Y},{Crop.Width},{Crop.Height}",
                     $"CropFrameSize={CropFrameSize.Width},{CropFrameSize.Height}",
+                    "CropVerified=" + CropVerified,
                     "Csv=" + CsvPath,
                     "NotesFont=" + NotesFont,
                     "NotesTextColor=" + NotesTextColor,

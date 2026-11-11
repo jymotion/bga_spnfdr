@@ -31,7 +31,7 @@ namespace BgaSpnfdr
         private readonly ScoreTracker _tracker = new ScoreTracker();
         private readonly byte[] _band = new byte[ScoreBand.Width * ScoreBand.Rows];
         private byte[] _rows = Array.Empty<byte>(); // frame rows under the band
-        private Rectangle _lastCrop;
+        private Rectangle _lastCrop, _lastMoved;
         private long _lastRead, _lastSnapshot;
 
         /// <summary>Set by the UI while it wants full-frame snapshots.</summary>
@@ -40,6 +40,9 @@ namespace BgaSpnfdr
         public Action<string> NoteReady;
         /// <summary>PipeWire thread: a new snapshot can be taken.</summary>
         public Action SnapshotReady;
+        /// <summary>PipeWire thread: the score was read starting left of
+        /// the crop's edge, so the crop belongs here (ScoreBand.Recenter).</summary>
+        public Action<Rectangle> CropMoved;
 
         private readonly object _snapshotLock = new object();
         private byte[] _snapshot = Array.Empty<byte>();
@@ -65,21 +68,26 @@ namespace BgaSpnfdr
             {
                 _lastRead = now;
                 var cfg = _config;
-                var frameRect = new Rectangle(0, 0, f.Width, f.Height);
-                if (cfg.Crop.Width > 0 && frameRect.Contains(cfg.Crop))
+                // a crop worked out from the score can reach a pixel or two
+                // past the frame: what matters is that the score band is in it
+                int first = 0, last = -1, left = 0, right = -1;
+                if (cfg.Crop.Width > 0 && cfg.Crop.Height > 0)
+                {
+                    ScoreBand.RowsNeeded(cfg.Crop, f.Height, out first, out last);
+                    ScoreBand.ColumnsNeeded(cfg.Crop, f.Width, out left, out right);
+                }
+                if (last >= first && right >= left)
                 {
                     if (cfg.Crop != _lastCrop)
                     {
                         _reader.Reset(); // re-find the vertical offset for the new crop
                         _lastCrop = cfg.Crop;
                     }
-                    ScoreBand.RowsNeeded(cfg.Crop, f.Height, out int first, out int last);
                     int n = (last - first + 1) * f.Stride;
                     if (_rows.Length < n)
                         _rows = new byte[n];
                     // only the columns under the band: the rest of each row
                     // is never read (ScoreBand.Fill)
-                    ScoreBand.ColumnsNeeded(cfg.Crop, f.Width, out int left, out int right);
                     long columns = (right - left + 1) * 4L;
                     fixed (byte* rows = _rows)
                         for (int y = first; y <= last; y++)
@@ -90,6 +98,15 @@ namespace BgaSpnfdr
                     string note = _tracker.HandleRead(read, cfg.Route, _reader.LeftMatch);
                     if (note != null)
                         NoteReady?.Invoke(note);
+                    if (_tracker.ReadStands)
+                    {
+                        Rectangle moved = ScoreBand.Recenter(cfg.Crop, _reader.FoundFirst);
+                        if (moved != cfg.Crop && moved != _lastMoved)
+                        {
+                            _lastMoved = moved;
+                            CropMoved?.Invoke(moved);
+                        }
+                    }
                 }
             }
 

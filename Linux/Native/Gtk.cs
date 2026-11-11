@@ -194,7 +194,7 @@ namespace BgaSpnfdr.Native
             IntPtr provider = previous != IntPtr.Zero ? previous : gtk_css_provider_new();
             IntPtr error = IntPtr.Zero;
             if (gtk_css_provider_load_from_data(provider, css, -1, &error) == 0)
-                Console.Error.WriteLine("bga_spnfdr: CSS error: " + GLib.TakeError(error));
+                GLib.Print(2, "bga_spnfdr: CSS error: " + GLib.TakeError(error));
             if (previous == IntPtr.Zero)
                 gtk_style_context_add_provider(gtk_widget_get_style_context(widget), provider,
                     STYLE_PROVIDER_PRIORITY_APPLICATION);

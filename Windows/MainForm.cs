@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace BgaSpnfdr
@@ -40,7 +42,12 @@ namespace BgaSpnfdr
         private Point _dragStart;          // in capture-pixel coordinates
         private Rectangle _cropBeforeDrag; // restored on stray clicks
 
-        private GameFeedDetector _detector; // non-null while auto-crop runs
+        // Core/GameFinder at work: _detector while auto-crop runs (the user
+        // waits for it), _checker in the background while the crop hasn't
+        // been confirmed by a score (set up on the menu, there is none yet)
+        private GameFinder _detector, _checker;
+        private bool _reported;            // the finder at work has given a result already
+        private byte[] _pixels = new byte[0]; // the newest whole picture, for the finders
         private string _stickyStatus;       // status message that survives a few ticks
         private DateTime _stickyUntil;
 
@@ -219,6 +226,7 @@ namespace BgaSpnfdr
                 return;
             }
             _targetWindow = target;
+            _settings.CropVerified = false; // the crop was for another window
             _settings.WindowTitle = Native.GetWindowTitle(target);
             SaveSettings();
             UpdateButtonLabels();
@@ -229,7 +237,9 @@ namespace BgaSpnfdr
 
         private void StartAutoCrop(int frameBudget)
         {
-            _detector = new GameFeedDetector(frameBudget);
+            _detector = GameFinder.Detect(frameBudget);
+            _checker = null;
+            _reported = false;
         }
 
         private void RetryAutoCrop(object sender, EventArgs e)
@@ -245,28 +255,73 @@ namespace BgaSpnfdr
             StartAutoCrop(AutoCropFramesRetry);
         }
 
-        private void FeedAutoCrop()
+        /// <summary>Hands the newest whole picture to the finder at work.</summary>
+        private void FeedFinder()
         {
+            GameFinder finder = _detector ?? _checker;
             var client = WindowCapture.ClientArea(_targetWindow, _capture.Size);
-            if (!_detector.Feed(_capture, client))
+            byte[] px = Pixels(out int stride);
+            if (!finder.Feed(px, _capture.Width, _capture.Height, stride, false, client))
                 return;
 
-            Rectangle box = _detector.Result;
-            _detector = null;
-            _cropStale = false; // re-detected, or (if that failed) back to the crop there was
-            if (box.IsEmpty)
-            {
+            bool first = !_reported;
+            _reported = true;
+            if (finder == _detector)
+                _cropStale = false; // re-detected, or (if that failed) back to the crop there was
+            if (finder == _detector && finder.Result.IsEmpty)
                 ShowStickyStatus("Couldn't auto-detect the game feed — use \"Manually Crop Gamefeed\".");
-                return;
+            else if (finder == _detector)
+            {
+                // on the game's menu there is no score to go by yet: the box
+                // is from what moves and the picture's edges
+                SetCrop(finder.Result, finder.Verified);
+                if (first)
+                    ShowStickyStatus(finder.Verified
+                        ? "Gameplay feed auto-detected and confirmed by the score."
+                        : "Gameplay feed auto-detected — if the red box looks wrong, use \"Re-try Automatic " +
+                          "Crop\" or \"Manually Crop Gamefeed\". It adjusts itself when a score appears.",
+                        seconds: 12);
             }
-            _settings.Crop = box;
+            else if (finder.Verified)
+            {
+                SetCrop(finder.Result, true);
+                if (first)
+                    ShowStickyStatus("Score found — the crop now fits it exactly.", seconds: 8);
+            }
+            // a finder that has just found the score goes on to steady its
+            // result; one that hasn't is started afresh by CaptureFrame
+            if (!finder.Refining)
+                _detector = _checker = null;
+        }
+
+        private void SetCrop(Rectangle crop, bool verified)
+        {
+            _settings.Crop = crop;
+            _settings.CropVerified = verified;
             _settings.CropWindowSize = _sizeChecked = _source.Size;
             SaveSettings();
             _previewBox.Invalidate();
-            ShowStickyStatus(
-                "Gameplay feed auto-detected — if the red box looks wrong, use " +
-                "\"Re-try Automatic Crop\" or \"Manually Crop Gamefeed\".",
-                seconds: 12);
+        }
+
+        /// <summary>The newest whole picture as bytes (B,G,R,x, all rows),
+        /// which is what Core/GameFinder works on.</summary>
+        private byte[] Pixels(out int stride)
+        {
+            var data = _capture.LockBits(new Rectangle(Point.Empty, _capture.Size),
+                ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
+            try
+            {
+                stride = data.Stride;
+                int n = stride * data.Height;
+                if (_pixels.Length < n)
+                    _pixels = new byte[n];
+                Marshal.Copy(data.Scan0, _pixels, 0, n);
+            }
+            finally
+            {
+                _capture.UnlockBits(data);
+            }
+            return _pixels;
         }
 
         private void ShowStickyStatus(string text, int seconds = 6)
@@ -296,6 +351,7 @@ namespace BgaSpnfdr
                 return;
             }
             _manualCropMode = true;
+            _checker = null;
             _cropButton.Text = "Cancel Manual Crop";
             _previewBox.Cursor = Cursors.Cross;
             ShowStickyStatus("Drag a box on the preview around the full game picture.");
@@ -342,9 +398,10 @@ namespace BgaSpnfdr
                 _previewBox.Invalidate();
                 return;
             }
-            _settings.CropWindowSize = _sizeChecked = _source.Size;
-            SaveSettings();
-            _previewBox.Invalidate();
+            // onto the picture's edges, where they can be seen close by
+            SetCrop(GameFinder.Snap(Pixels(out int stride), _capture.Width, _capture.Height, stride, false,
+                _settings.Crop), false);
+            ShowStickyStatus("Crop set. It adjusts itself to the score when one appears.", seconds: 8);
             ExitManualCrop(); // one crop per button press
         }
 
@@ -440,7 +497,7 @@ namespace BgaSpnfdr
             // picture, which Windows.Graphics.Capture then copies back too.
             bool sideTasks = _timer.Interval >= 100 || ++_reads % 3 == 0;
             bool fullFrame = sideTasks
-                && (_detector != null || (Visible && WindowState != FormWindowState.Minimized));
+                && (_detector != null || _checker != null || (Visible && WindowState != FormWindowState.Minimized));
 #if PERF_TEST
             if (_perf.Tick(Visible))
             {
@@ -486,22 +543,34 @@ namespace BgaSpnfdr
             if (_previewBox.Visible && Visible)
                 _previewBox.Invalidate();
 
-            if (_detector != null && _capture != null)
-                FeedAutoCrop();
+            // a crop no score has confirmed yet is checked until one does
+            bool unconfirmed = !_settings.Crop.IsEmpty && !_settings.CropVerified;
+            if (_detector == null && _checker == null && !_manualCropMode && !_cropStale && unconfirmed)
+            {
+                _checker = GameFinder.Check(_settings.Crop);
+                _reported = false;
+            }
+            if ((_detector != null || _checker != null) && _capture != null)
+                FeedFinder();
+            unconfirmed = !_settings.Crop.IsEmpty && !_settings.CropVerified;
 
             // while picking a window, the status bar shows the pick prompt —
             // don't stomp it every tick (sticky messages get a few seconds)
             if (_detector != null)
             {
                 int seconds = (_detector.FramesLeft * 100 + 999) / 1000; // fed ~10 frames a second
-                _statusLabel.Text = $"Auto-detecting the game feed… {seconds}s";
+                _statusLabel.Text = seconds > 0
+                    ? $"Auto-detecting the game feed… {seconds}s"
+                    : "Auto-detecting the game feed… checking it against the score";
             }
             else if (!_picker.Active)
             {
 #if PERF_TEST
                 _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus : _tracker.Status + "  ·  " + _perf.Summary;
 #else
-                _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus : _tracker.Status;
+                _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus
+                    : unconfirmed ? _tracker.Status + "  ·  crop not confirmed yet: it adjusts itself when a score appears"
+                    : _tracker.Status;
 #endif
             }
         }
@@ -524,6 +593,7 @@ namespace BgaSpnfdr
             else if (_settings.CropWindowSize != size)
             {
                 _cropStale = true;
+                _settings.CropVerified = false; // it was confirmed for the other size
                 ShowStickyStatus("The capture window changed size — re-detecting the game feed.");
                 StartAutoCrop(AutoCropFramesInitial);
             }
@@ -575,6 +645,14 @@ namespace BgaSpnfdr
             string note = _tracker.HandleRead(read, _scoreTable, _reader.LeftMatch);
             if (note != null)
                 _notesForm.SetNote(note);
+            // the score read starting left of the crop's edge: the crop
+            // belongs further left (ScoreBand.Recenter)
+            if (_tracker.ReadStands && _detector == null && !_manualCropMode)
+            {
+                Rectangle moved = ScoreBand.Recenter(crop, _reader.FoundFirst);
+                if (moved != crop)
+                    SetCrop(moved, _settings.CropVerified);
+            }
         }
 
         // ---------- painting & coordinate mapping ----------
@@ -642,7 +720,8 @@ namespace BgaSpnfdr
                 }
                 using (var pen = new Pen(Color.Red, 2))
                     e.Graphics.DrawRectangle(pen, r);
-                TextRenderer.DrawText(e.Graphics, "game feed",
+                TextRenderer.DrawText(e.Graphics,
+                    _settings.CropVerified ? "game feed (confirmed by the score)" : "game feed (not confirmed yet)",
                     Font, new Point(r.X + 4, r.Y + 3), Color.Red);
 
                 var scoreDisp = ImageToPreview(ScoreRegion());

@@ -19,6 +19,17 @@ namespace BgaSpnfdr.Native
         [LibraryImport(Glib)] public static partial uint g_timeout_add(uint interval, IntPtr function, IntPtr data);
         [LibraryImport(Glib)] public static partial int g_source_remove(uint tag);
         [LibraryImport(Glib)] public static partial void g_free(IntPtr mem);
+
+        [LibraryImport("libc", EntryPoint = "write")] private static partial nint write(int fd, byte* buffer, nuint count);
+
+        /// <summary>Writes text to the terminal (1 = output, 2 = errors).
+        /// Instead of System.Console, which adds 130 KB to the program.</summary>
+        public static void Print(int fd, string text)
+        {
+            byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(text + "\n");
+            fixed (byte* p = utf8)
+                write(fd, p, (nuint)utf8.Length);
+        }
         [LibraryImport(Glib)] public static partial void g_error_free(IntPtr error);
 
         [LibraryImport(Gobject, StringMarshalling = StringMarshalling.Utf8)]
@@ -214,6 +225,6 @@ namespace BgaSpnfdr.Native
         }
 
         /// <summary>Exceptions must never unwind into native code.</summary>
-        public static void Report(Exception e) => Console.Error.WriteLine("bga_spnfdr: " + e);
+        public static void Report(Exception e) => GLib.Print(2, "bga_spnfdr: " + e);
     }
 }
