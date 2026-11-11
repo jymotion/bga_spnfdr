@@ -24,8 +24,6 @@
     <!-- WinRT projections for Windows.Graphics.Capture. Build-time only:
          .NET Framework calls WinRT itself, so the exe stays a single file. -->
     <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.22621.2428" />
-    <!-- TextFieldParser for route CSVs with quoted multi-line notes (in-box) -->
-    <Reference Include="Microsoft.VisualBasic" />
   </ItemGroup>
 
   <!-- Capture test build (dotnet build ... -p:PerfTest=true): rotates each

@@ -78,7 +78,7 @@ namespace BgaSpnfdr
                     Marshal.Copy((IntPtr)(f.Data + (long)first * f.Stride), _rows, 0, n);
                     ScoreBand.Fill(_rows, f.Stride, first, last, f.Width, cfg.Crop, f.RgbOrder, _band);
                     string read = _reader.Read(_band, ScoreBand.Width, ScoreBand.Rows);
-                    string note = _tracker.HandleRead(read, cfg.Route);
+                    string note = _tracker.HandleRead(read, cfg.Route, _reader.LeftMatch);
                     if (note != null)
                         NoteReady?.Invoke(note);
                 }

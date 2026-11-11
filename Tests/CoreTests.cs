@@ -57,6 +57,24 @@ namespace BgaSpnfdr.Tests
         }
 
         [Fact]
+        public void LowerReadWithAFaintDigitInFrontIsDropped()
+        {
+            // "39800" off 239800, whose "2" matched just under the threshold
+            var t = ConfirmedAt("239775");
+            for (int i = 0; i < 20; i++)
+                Assert.Null(t.HandleRead("39800", Route, 0.55f));
+            Assert.Equal("read 39800 rejected (end of a longer score)", t.Status);
+            // nothing in front of it: a real drop (new run), the usual 5 reads
+            for (int i = 0; i < 5; i++)
+                t.HandleRead("0", Route, 0.2f);
+            Assert.Equal("score 0", t.Status);
+            // going up is never held back by it
+            t.HandleRead("25", Route, 0.55f);
+            t.HandleRead("25", Route, 0.55f);
+            Assert.Equal("score 25", t.Status);
+        }
+
+        [Fact]
         public void HugeJumpNeedsFiveReads()
         {
             // junk-prefix read: an extra digit in front of 273850's tail
@@ -156,6 +174,38 @@ namespace BgaSpnfdr.Tests
                 Assert.Equal(2, table.Count);
                 Assert.Equal("Go left\nthen grab the nuke", table[273850]);
                 Assert.Equal("Boss", table[468025]);
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        [Fact]
+        public void KeepsBlankLinesQuotesAndCommas()
+        {
+            string path = Path.GetTempFileName();
+            try
+            {
+                File.WriteAllText(path,
+                    "100,\"line 1\r\n\r\nline 3\"\r\n" +
+                    "200,\"he said \"\"hi\"\", then left\"\n" +
+                    "300,go left, then right\n" +
+                    "400,it's 5\" wide\n" +
+                    "500,  padded  ,,\n" +
+                    "600,\" kept \",\"more\ncolumns\"\n" +
+                    "\n" +
+                    "no comma here\n" +
+                    "700,last row has no line end");
+                var table = RouteCsv.Load(path);
+                Assert.Equal(7, table.Count);
+                Assert.Equal("line 1\n\nline 3", table[100]);
+                Assert.Equal("he said \"hi\", then left", table[200]);
+                Assert.Equal("go left, then right", table[300]);
+                Assert.Equal("it's 5\" wide", table[400]);
+                Assert.Equal("padded", table[500]);
+                Assert.Equal(" kept ", table[600]);
+                Assert.Equal("last row has no line end", table[700]);
             }
             finally
             {

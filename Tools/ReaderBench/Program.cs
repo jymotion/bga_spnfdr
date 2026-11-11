@@ -76,7 +76,7 @@ namespace BgaSpnfdr.Bench
                     ScoreBand.Fill(rows, frameW * 4, first, last, frameW, crop, false, band);
                     string read = reader.Read(band, ScoreBand.Width, ScoreBand.Rows);
                     readTime.Stop();
-                    string note = tracker.HandleRead(read, route);
+                    string note = tracker.HandleRead(read, route, reader.LeftMatch);
                     long expected = Expected(truth, p, t);
                     if (note != null)
                     {

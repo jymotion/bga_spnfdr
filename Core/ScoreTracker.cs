@@ -6,7 +6,8 @@ namespace BgaSpnfdr
     /// Decides which reads become the displayed score. Platform-neutral: each
     /// build hands it Core/DigitReader's read of every frame, and it applies
     /// every safeguard (digits only, leading zeros, length cap, 25-point
-    /// increments, consecutive-read confirmation, hold on loss).
+    /// increments, fragments of a longer score, consecutive-read
+    /// confirmation, hold on loss).
     /// </summary>
     internal sealed class ScoreTracker
     {
@@ -27,6 +28,15 @@ namespace BgaSpnfdr
         private int ConfirmReads = 2;
         private int BackwardConfirmReads = 5;
 #endif
+
+        // A read below the current score with at least this strong a match
+        // where one more leading digit would sit (DigitReader.LeftMatch) is
+        // the end of a longer score whose leading digit fell just under the
+        // reader's threshold. At some capture sizes that lasts long enough
+        // to pass BackwardConfirmReads: on the reference run scaled 1.1x and
+        // 1.4x, "39800" and "9800" off 239800 got confirmed, with the lost
+        // digit matching 0.53-0.58. Background there matched under 0.35.
+        private const float FragmentMatch = 0.4f;
 
         /// <summary>Picks the rule for the read rate: true for ~30 reads a
         /// second (3 and 8 reads), false for 10 (2 and 5).</summary>
@@ -89,10 +99,20 @@ namespace BgaSpnfdr
         /// <summary>Feeds one frame's read. Returns the note to show when this
         /// frame confirms a new score that has one in <paramref name="route"/>;
         /// otherwise null, and whatever note is up stays up (a stale note
-        /// beats a vanished one mid-run).</summary>
-        public string HandleRead(string read, Dictionary<long, string> route)
+        /// beats a vanished one mid-run). <paramref name="leftMatch"/> is
+        /// DigitReader.LeftMatch for this read.</summary>
+        public string HandleRead(string read, Dictionary<long, string> route, float leftMatch = 0)
         {
             string candidate = ValidCandidate(read);
+
+            // Safeguard: a lower value with signs of another digit in front
+            // of it is a fragment of the real score, however often it repeats
+            if (candidate != null && _confirmedScore >= 0 && leftMatch >= FragmentMatch
+                && long.Parse(candidate) < _confirmedScore)
+            {
+                Status = $"read {candidate} rejected (end of a longer score)";
+                candidate = null;
+            }
             if (candidate == null)
             {
                 // Safeguard: score hidden/unreadable -> hold the last

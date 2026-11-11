@@ -11,7 +11,13 @@ namespace BgaSpnfdr
     /// </summary>
     internal static class ScoreBand
     {
-        public const int Margin = 2;  // extra rows above/below: setups differ by a pixel or two
+        // Extra rows above/below the band, each one more vertical offset the
+        // reader tries. A crop (auto-detected or dragged by hand) is easily a
+        // few rows off, and on the reference run a band 3 rows off confirmed
+        // wrong scores; with 5, every shift up to 5 rows read like a perfect
+        // crop. Costs little: once the reader locks onto a row it reads only
+        // that one.
+        public const int Margin = 5;
         public const int Width = 216; // BattleTanx.ScoreFraction's 35% of the 617-px reference picture
         public const int Rows = DigitReader.BandHeight + 2 * Margin;
         private const int Top = DigitReader.BandTop - Margin;

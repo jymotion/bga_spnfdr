@@ -529,7 +529,7 @@ namespace BgaSpnfdr
             ScoreBand.Fill(_source.Rows, _source.Stride, _source.First, _source.Last, _source.Size.Width,
                 crop, false, _band);
             string read = _reader.Read(_band, ScoreBand.Width, ScoreBand.Rows);
-            string note = _tracker.HandleRead(read, _scoreTable);
+            string note = _tracker.HandleRead(read, _scoreTable, _reader.LeftMatch);
             if (note != null)
                 _notesForm.SetNote(note);
         }

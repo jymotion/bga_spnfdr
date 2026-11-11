@@ -28,7 +28,7 @@ namespace BgaSpnfdr
     ///    leading digits can get past the safeguards), so callers pass a
     ///    slightly taller band and every vertical offset is tried; the
     ///    strongest chain wins. The capture setup doesn't move, so once the
-    ///    same offset wins LockVotes reads running, only that row is read,
+    ///    same offset wins LockVotes confident reads running, only that row is read,
     ///    with a full search every RecheckEvery frames in case it changed.
     ///    Call Reset() when the crop changes.
     /// Validation (multiples of 25, confirmation reads, ...) is not done
@@ -54,7 +54,11 @@ namespace BgaSpnfdr
 
         private const int Pixels = BandHeight * GlyphWidth;
         private const int LockVotes = 5;
-        private const int RecheckEvery = 30;
+        private const int RecheckEvery = 60;
+        // A read votes for its row only when its digits average this far
+        // above MatchThreshold (0.8 in all). Real digits mostly match
+        // 0.8-0.98; stray matches on a hidden score 0.6-0.7.
+        private const float LockGain = 0.2f;
 
         // 10 digits x 18 rows x 14 columns, row-major, brightness in 16
         // levels packed two pixels per byte (high nibble first): 1.3 KB, which
@@ -165,6 +169,13 @@ namespace BgaSpnfdr
         private readonly float[] _window = new float[Pixels];
         private readonly char[] _text = new char[32];
 
+        /// <summary>After Read: the strongest match (0..1) one digit step
+        /// left of the read's first digit, where a further digit would sit.
+        /// Real background stays low here; a leading digit that fell just
+        /// under MatchThreshold (so the read is only the end of the score)
+        /// does not. ScoreTracker uses it to reject such fragments.</summary>
+        public float LeftMatch;
+
         private int _lockedOffset = -1;
         private int _candidate = -1;
         private int _candidateVotes;
@@ -186,6 +197,7 @@ namespace BgaSpnfdr
         /// looks like a score.</summary>
         public string Read(byte[] band, int width, int height)
         {
+            LeftMatch = 0;
             int nx = width - GlyphWidth + 1;
             if (nx <= 0 || height < BandHeight || band.Length < width * height)
                 return "";
@@ -211,7 +223,10 @@ namespace BgaSpnfdr
                     best = ChainText(end);
                 }
             }
-            if (bestOffset >= 0)
+            // only a confident read votes: while the score is hidden, stray
+            // weak matches on some other row would otherwise win the lock
+            // and the real score go unread there once it is back
+            if (bestOffset >= 0 && bestScore >= LockGain * best.Length)
             {
                 if (bestOffset == _candidate)
                     _candidateVotes++;
@@ -335,9 +350,17 @@ namespace BgaSpnfdr
 
         private string ChainText(int end)
         {
-            int n = 0;
+            int n = 0, first = end;
             for (int x = end; x >= 0 && n < _text.Length; x = _prev[x])
+            {
                 _text[n++] = (char)('0' + _digit[x]);
+                first = x;
+            }
+            float left = 0;
+            for (int x = Math.Max(0, first - MaxStep); x <= first - MinStep; x++)
+                if (_best[x] > left)
+                    left = _best[x];
+            LeftMatch = left;
             Array.Reverse(_text, 0, n);
             return new string(_text, 0, n);
         }

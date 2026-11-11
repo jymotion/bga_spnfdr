@@ -19,7 +19,8 @@ Windows and Linux.
    the game feed, you can click **Re-try Automatic Crop** to try again or
    manually crop it yourself.
 3. **Select Route CSV** — column 1 = score, column 2 = note text (quoted
-   multi-line notes work). When the confirmed score matches a CSV row, its
+   multi-line notes work, blank lines included; a one-line note may hold
+   commas without quotes). When the confirmed score matches a CSV row, its
    note appears in the notes window — and stays up until a different score
    matches (a stale note beats a vanished one mid-run).
 4. **Change Notes Formatting** opens a dialog for font family, size,
@@ -62,7 +63,7 @@ Requires the .NET 8 SDK and clang (build machine only; on Arch:
 dotnet publish Linux/bga_spnfdr.csproj -c Release -o out
 ```
 
-Output: `out/bga_spnfdr`, one self-contained native program (about 2 MB,
+Output: `out/bga_spnfdr`, one self-contained native program (about 1.7 MB,
 under 1 MB compressed; no .NET install needed to run it). Ship that single
 file (`bga_spnfdr.dbg` is debug symbols). It uses what Linux desktops
 already have: GTK 3, PipeWire, and the screen-sharing portal
@@ -96,8 +97,10 @@ APIs (the test project, which targets plain .NET 8, catches that).
 Both builds read the score with `Core/DigitReader.cs`, which matches the
 game's own digit shapes (1.3 KB of templates) instead of using an OCR
 engine. It finds the score wherever it sits under the minimap (the position
-changes per level), copes with the proportional font, and searches a couple
-of pixel rows up and down, because being one row off loses digits.
+changes per level), copes with the proportional font, and searches 5 pixel rows up and
+down, because being one row off loses digits and a crop is easily a few
+rows off (the run reads the same with the crop moved up to 5 rows either
+way; `ReaderBench`'s misalignment argument checks it).
 `Core/ScoreBand.cs` cuts the score band out of the captured frame and scales
 it, so any capture resolution works (checked from 480x360 to 1440x1080).
 
@@ -138,6 +141,12 @@ The displayed score only changes when a read survives all of these checks
    instead of 10, so they need 3 and 8 to cover the same span of time;
    back-to-back frames look almost identical, so a misread can repeat.
    (On its 10-a-second fallback the Windows app uses 2 and 5.)
-3. **Hold on loss** — when the score is hidden (menus, cutscenes,
+3. **No fragments** — a value *lower* than the current score is dropped
+   when the reader sees a faint digit just in front of it: it is the end
+   of the real score, whose leading digit fell just under the reader's
+   threshold. At some capture sizes that can last long enough to pass
+   check 2 (at 704x528 and 896x672 the reference run confirmed "39800" off
+   239800 before this check; `ReaderBench`'s scale argument, 1.1 and 1.4).
+4. **Hold on loss** — when the score is hidden (menus, cutscenes,
    explosions) the last confirmed value is kept rather than cleared, and a
    note stays up until a different score has one.
