@@ -64,9 +64,6 @@ namespace BgaSpnfdr
 
         private Size _sizeChecked; // capture-window size the crop was last checked against
         private bool _cropStale;   // the window changed size: no reading until re-detected
-#if PERF_TEST
-        private readonly PerfTest _perf = new PerfTest();
-#endif
 
         public MainForm()
         {
@@ -114,9 +111,6 @@ namespace BgaSpnfdr
             UpdateButtonLabels();
 
             _timer = new Timer { Interval = 100 };
-#if PERF_TEST
-            _source.AllowGraphicsCapture = _perf.Graphics;
-#endif
             _timer.Tick += (s, e) => CaptureFrame();
             _timer.Start();
         }
@@ -426,23 +420,10 @@ namespace BgaSpnfdr
             bool sideTasks = _timer.Interval >= 100 || ++_reads % 3 == 0;
             bool fullFrame = sideTasks
                 && (_detector != null || _checker != null || (Visible && WindowState != FormWindowState.Minimized));
-#if PERF_TEST
-            if (_perf.Tick(Visible))
-            {
-                _source.AllowGraphicsCapture = _perf.Graphics;
-                _source.Retry();
-            }
-            var captureTime = System.Diagnostics.Stopwatch.StartNew();
-#endif
             bool ok = _source.Capture(_targetWindow, _settings.Crop, fullFrame);
-#if PERF_TEST
-            _perf.OnCapture(captureTime.Elapsed.TotalMilliseconds, ok, _source);
-            SetReadRate(_perf.Fast);
-#else
             // 30 reads a second with Windows.Graphics.Capture; PrintWindow
             // (its fallback) costs much more per read, so that reads 10
             SetReadRate(_source.UsedGraphicsCapture);
-#endif
             if (!ok)
             {
                 if (!_picker.Active)
@@ -453,18 +434,12 @@ namespace BgaSpnfdr
             }
             if (_source.Frame != null)
                 _capture = _source.Frame;
-#if PERF_TEST
-            var readTime = System.Diagnostics.Stopwatch.StartNew();
-#endif
             CheckWindowSize();
             _tracker.WantStatus = Visible; // nobody sees it otherwise
             if (_source.Fresh)
                 _staleTicks = 0;
             if (!_cropStale && (_source.Fresh || ++_staleTicks % StaleReadEvery == 0))
                 ReadScore();
-#if PERF_TEST
-            _perf.OnRead(readTime.Elapsed.TotalMilliseconds, _tracker.Confirmed);
-#endif
             if (!sideTasks)
                 return;
 
@@ -494,15 +469,11 @@ namespace BgaSpnfdr
             }
             else if (!_picker.Active)
             {
-#if PERF_TEST
-                _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus : _tracker.Status + "  ·  " + _perf.Summary;
-#else
                 _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus
                     : !unconfirmed ? _tracker.Status
                     : _settings.Crop.IsEmpty ? "Looking for the game: it is found when its menu or a score is on screen"
                     : _cropFromMenu ? _tracker.Status + "  ·  crop set from the game's menu; the first score will confirm it"
                     : _tracker.Status + "  ·  crop not confirmed yet: it is set from the game's menu, or the first score";
-#endif
             }
         }
 

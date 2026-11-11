@@ -20,16 +20,10 @@ jobs:
         run: dotnet test Tests -c Release
       - name: Windows app
         run: dotnet build Windows/bga_spnfdr.csproj -c Release -o out/windows
-      - name: Windows capture test build (rotates capture methods, logs CPU and scores)
-        run: dotnet build Windows/bga_spnfdr.csproj -c Release -p:PerfTest=true --no-incremental -o out/perftest
       - uses: actions/upload-artifact@v4
         with:
           name: bga_spnfdr-windows
           path: out/windows/bga_spnfdr.exe
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bga_spnfdr-windows-30fps-test
-          path: out/perftest/bga_spnfdr_30fps_test.exe
 
   linux:
     # built on the oldest supported Ubuntu so the program runs on as many

@@ -65,10 +65,6 @@ namespace BgaSpnfdr
         /// stands (so where its digits were found can be trusted).</summary>
         public bool ReadStands;
 
-#if PERF_TEST
-        /// <summary>Windows 30-reads-a-second test build only.</summary>
-        public long Confirmed => _confirmedScore;
-#endif
 
         /// <summary>Returns the read if it passes every sanity check,
         /// otherwise null (with the reason in Status).</summary>

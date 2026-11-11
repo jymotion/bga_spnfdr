@@ -26,16 +26,6 @@
     <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.22621.2428" />
   </ItemGroup>
 
-  <!-- Capture test build (dotnet build ... -p:PerfTest=true): rotates each
-       minute between PrintWindow at 30 reads/s, Windows.Graphics.Capture at
-       30/s and PrintWindow at 10/s, and logs CPU, timings and confirmed
-       scores per method. The normal build is unaffected (the extra code is
-       compiled out). -->
-  <PropertyGroup Condition="'$(PerfTest)' == 'true'">
-    <DefineConstants>$(DefineConstants);PERF_TEST</DefineConstants>
-    <AssemblyName>bga_spnfdr_30fps_test</AssemblyName>
-  </PropertyGroup>
-
   <ItemGroup>
     <!-- Platform-neutral logic shared with the Linux build, compiled straight
          into this exe (no extra DLL). This project only ever sees Windows/

@@ -33,9 +33,6 @@ namespace BgaSpnfdr
         private int _bitmapFrame;       // _graphics.FrameNumber copied into it
         private Rectangle _bitmapArea;  // where that frame sits in it
 
-        /// <summary>False: PrintWindow only (the test build's PrintWindow minutes).</summary>
-        public bool AllowGraphicsCapture = true;
-
         /// <summary>Whether the last Capture used Windows.Graphics.Capture.</summary>
         public bool UsedGraphicsCapture;
 
@@ -76,7 +73,7 @@ namespace BgaSpnfdr
             if (hWnd == IntPtr.Zero || !Native.IsWindow(hWnd) || Native.IsIconic(hWnd))
                 return false;
 
-            if (AllowGraphicsCapture && Supported && hWnd != _failedWindow)
+            if (Supported && hWnd != _failedWindow)
             {
                 try
                 {
@@ -101,15 +98,6 @@ namespace BgaSpnfdr
             return CapturePrintWindow(hWnd, crop);
         }
 
-#if PERF_TEST
-        /// <summary>Test build: try Windows.Graphics.Capture again even on a
-        /// window it failed on.</summary>
-        public void Retry()
-        {
-            _failedWindow = IntPtr.Zero;
-            Error = null;
-        }
-#endif
 
         private bool CapturePrintWindow(IntPtr hWnd, Rectangle crop)
         {
