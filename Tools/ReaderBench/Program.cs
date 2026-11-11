@@ -21,6 +21,9 @@ namespace BgaSpnfdr.Bench
     /// the game-picture crop down by that many pixels, as if auto-crop were
     /// a little off. Build with -p:WindowsRules=true for the Windows app's
     /// confirmation rule (and run it at 10 fps).
+    ///
+    /// "-- layouts [footage dir]" instead measures how well the game picture
+    /// is found in different kinds of capture (Layouts.cs).
     /// </summary>
     internal static class Program
     {
@@ -29,6 +32,8 @@ namespace BgaSpnfdr.Bench
 
         private static int Main(string[] args)
         {
+            if (args.Length > 0 && args[0] == "layouts") // how well the game picture is found: Layouts.cs
+                return Layouts.Run(args.Length > 1 ? args[1] : "footage");
             double fps = args.Length > 0 ? double.Parse(args[0]) : 30;
             string footage = args.Length > 1 ? args[1] : "footage";
             double scale = args.Length > 2 ? double.Parse(args[2]) : 1;

@@ -514,28 +514,32 @@ namespace BgaSpnfdr
                 return Rectangle.FromLTRB(l, t, r, m); // black all round
 
             // sides that ran to the frame's edge found no black: for those,
-            // the outermost straight edge between the moving region and there
-            int el = b.Left, er = b.Right, et = b.Top, em = b.Bottom;
+            // the outermost straight edge between the moving region and
+            // there. Each is looked for along the moving region's own extent
+            // (or the other sides' edges once found), not along a side that
+            // ran away to the frame's edge: that would thin any edge out.
+            int el = -1, er = -1, et = -1, em = -1;
             for (int pass = 0; pass < 2; pass++)
             {
-                if (t == 0) et = OutermostEdge(px, stride, rgbOrder, true, et, 0, el, er);
-                if (m == _gridH) em = OutermostEdge(px, stride, rgbOrder, true, em, _gridH, el, er);
-                if (l == 0) el = OutermostEdge(px, stride, rgbOrder, false, el, 0, et, em);
-                if (r == _gridW) er = OutermostEdge(px, stride, rgbOrder, false, er, _gridW, et, em);
+                int a = el >= 0 ? el : b.Left, z = er >= 0 ? er : b.Right;
+                if (t == 0) et = OutermostEdge(px, stride, rgbOrder, true, b.Top, 0, a, z);
+                if (m == _gridH) em = OutermostEdge(px, stride, rgbOrder, true, b.Bottom, _gridH, a, z);
+                a = et >= 0 ? et : b.Top; z = em >= 0 ? em : b.Bottom;
+                if (l == 0) el = OutermostEdge(px, stride, rgbOrder, false, b.Left, 0, a, z);
+                if (r == _gridW) er = OutermostEdge(px, stride, rgbOrder, false, b.Right, _gridW, a, z);
             }
-            return Rectangle.FromLTRB(l > 0 ? l : el, t > 0 ? t : et, r < _gridW ? r : er, m < _gridH ? m : em);
+            return Rectangle.FromLTRB(el >= 0 ? el : l, et >= 0 ? et : t, er >= 0 ? er : r, em >= 0 ? em : m);
         }
 
         /// <summary>The grid line farthest from 'from' towards 'to' with a
-        /// straight edge along the span a..b; 'to' itself (the frame's edge)
-        /// if there is none.</summary>
+        /// straight edge along the span a..b; -1 if there is none.</summary>
         private int OutermostEdge(byte[] px, int stride, bool rgbOrder, bool horizontal, int from, int to, int a, int b)
         {
             int step = to < from ? 1 : -1;
             for (int line = to + step; line != from + step; line += step)
                 if (EdgeAcross(px, stride, rgbOrder, horizontal, line, a, b))
                     return line;
-            return to;
+            return -1;
         }
 
         /// <summary>The first lit row (or column) from 'from' going in
@@ -588,9 +592,11 @@ namespace BgaSpnfdr
             double share = EdgeShare(px, stride, width, height, rgbOrder, horizontal, at, from, to);
             if (share < 0.5)
                 return 0;
-            double beside = Math.Min(EdgeShare(px, stride, width, height, rgbOrder, horizontal, at - 4, from, to),
-                                     EdgeShare(px, stride, width, height, rgbOrder, horizontal, at + 4, from, to));
-            return beside <= 0.5 * share ? share : 0;
+            // (a line off the frame's edge says nothing either way)
+            int limit = (horizontal ? height : width) - 2;
+            double before = at - 4 >= 1 ? EdgeShare(px, stride, width, height, rgbOrder, horizontal, at - 4, from, to) : 1;
+            double after = at + 4 <= limit ? EdgeShare(px, stride, width, height, rgbOrder, horizontal, at + 4, from, to) : 1;
+            return Math.Min(before, after) <= 0.5 * share ? share : 0;
         }
 
         /// <summary>The share of the span from..to along which brightness
@@ -645,16 +651,16 @@ namespace BgaSpnfdr
             {
                 int reachY = Math.Max(3, (b - t) * 6 / 100), reachX = Math.Max(3, (r - l) * 6 / 100);
                 int inX = (r - l) / 8, inY = (b - t) / 8; // corners are often cut short
-                t = BestEdge(px, stride, width, height, rgbOrder, true, t, reachY, l + inX, r - inX);
-                b = BestEdge(px, stride, width, height, rgbOrder, true, b, reachY, l + inX, r - inX);
-                l = BestEdge(px, stride, width, height, rgbOrder, false, l, reachX, t + inY, b - inY);
-                r = BestEdge(px, stride, width, height, rgbOrder, false, r, reachX, t + inY, b - inY);
+                t = BestEdge(px, stride, width, height, rgbOrder, true, t, reachY, -1, l + inX, r - inX);
+                b = BestEdge(px, stride, width, height, rgbOrder, true, b, reachY, 1, l + inX, r - inX);
+                l = BestEdge(px, stride, width, height, rgbOrder, false, l, reachX, -1, t + inY, b - inY);
+                r = BestEdge(px, stride, width, height, rgbOrder, false, r, reachX, 1, t + inY, b - inY);
             }
             return r - l >= 40 && b - t >= 40 ? Rectangle.FromLTRB(l, t, r, b) : box;
         }
 
         private static int BestEdge(byte[] px, int stride, int width, int height, bool rgbOrder,
-            bool horizontal, int at, int reach, int from, int to)
+            bool horizontal, int at, int reach, int outward, int from, int to)
         {
             int best = at;
             double bestShare = 0.5; // an edge along at least half the side
@@ -668,6 +674,14 @@ namespace BgaSpnfdr
                         bestShare = share;
                         best = line;
                     }
+                }
+            // busy content just inside a border can pass for the border too:
+            // of lines a few pixels apart, the outermost is the border
+            for (int d = 1; d <= 4 && best != at; d++)
+                if (StraightEdge(px, stride, width, height, rgbOrder, horizontal, best + outward * d, from, to) >= 0.9 * bestShare)
+                {
+                    best += outward * d;
+                    d = 0;
                 }
             return best;
         }

@@ -160,6 +160,14 @@ namespace BgaSpnfdr
 
         private static readonly float[] Templates = LoadTemplates(1);
 
+        /// <summary>One pixel of a digit's template, as brightness (0-255):
+        /// the tests draw scores with it.</summary>
+        internal static byte Glyph(int digit, int row, int column)
+        {
+            int i = digit * Pixels + row * GlyphWidth + column;
+            return (byte)((TemplateData[i >> 1] >> ((i & 1) == 0 ? 4 : 0) & 15) * 17);
+        }
+
         // every other row and column of the templates, for QuickLook; a
         // window must match one this well there to be looked at in full
         private const int QuickPixels = (BandHeight + 1) / 2 * ((GlyphWidth + 1) / 2);

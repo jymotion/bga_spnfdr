@@ -71,6 +71,9 @@ namespace BgaSpnfdr
         private static readonly double[] After = { 11.92, 9.80, 12.55, 11.00, 11.85, 11.94, 13.70, 12.17, 13.26, 13.28 };
         private static readonly double[] Before = { 0, 0.14, 1.27, 0.76, 1.94, -0.10, 0.04, -0.33, 0.55, 0.54 };
 
+        /// <summary>Reference pixels from one digit's left edge to the next's.</summary>
+        internal static double Advance(char digit, char next) => After[digit - '0'] + Before[next - '0'];
+
         private readonly DigitReader _reader = new DigitReader();
         private byte[] _strip = new byte[0];
         private byte[] _px;
@@ -303,7 +306,7 @@ namespace BgaSpnfdr
                     return;
                 double expected = 0;
                 for (int i = 0; i + 1 < trial.Text.Length; i++)
-                    expected += After[trial.Text[i] - '0'] + Before[trial.Text[i + 1] - '0'];
+                    expected += Advance(trial.Text[i], trial.Text[i + 1]);
                 double ratio = (_reader.FoundX[trial.Text.Length - 1] - _reader.FoundX[0]) / expected;
                 if (ratio < 0.7 || ratio > 1.4 || !LookAround(ref trial, hit.Sx * ratio, hit.Sy))
                     return;

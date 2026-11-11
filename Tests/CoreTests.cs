@@ -158,6 +158,137 @@ namespace BgaSpnfdr.Tests
         }
     }
 
+    /// <summary>Core/GameFinder and Core/ScoreFinder on drawn frames: a
+    /// "game picture" of noise (moving or still) with a score drawn from
+    /// the reader's own digit shapes, on black or on a backdrop. The real
+    /// footage is checked with Tools/ReaderBench (layouts).</summary>
+    public class GameFinderTests
+    {
+        private const int W = 640, H = 480;
+        private static readonly System.Drawing.Rectangle Picture = new System.Drawing.Rectangle(14, 2, 617, 474);
+
+        /// <summary>A frame (B,G,R,x): backdrop all over, the picture's top
+        /// part noise that changes with seed, the rest of it dim and still,
+        /// and the score in its place (reference geometry, 1:1).</summary>
+        private static byte[] Frame(int seed, byte backdrop, string score, System.Drawing.Rectangle picture,
+            int width = W, int height = H, System.Drawing.Rectangle other = default)
+        {
+            var px = new byte[width * height * 4];
+            var moving = new System.Random(seed);
+            var still = new System.Random(99);
+            for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                {
+                    byte v = backdrop;
+                    if (picture.Contains(x, y))
+                    {
+                        byte a = (byte)moving.Next(256), b = (byte)(110 + still.Next(100));
+                        v = y < picture.Y + picture.Height * 6 / 10 ? a : b;
+                    }
+                    else if (other.Contains(x, y))
+                        v = (byte)moving.Next(256);
+                    px[(y * width + x) * 4] = px[(y * width + x) * 4 + 1] = px[(y * width + x) * 4 + 2] = v;
+                }
+            // the score, right where the reference picture has it
+            double at = 60;
+            for (int i = 0; i < score.Length; i++)
+            {
+                for (int r = 0; r < DigitReader.BandHeight; r++)
+                    for (int c = 0; c < DigitReader.GlyphWidth; c++)
+                    {
+                        int x = picture.X + (int)System.Math.Round(at) + c, y = picture.Y + DigitReader.BandTop + r;
+                        byte v = DigitReader.Glyph(score[i] - '0', r, c);
+                        px[(y * width + x) * 4] = px[(y * width + x) * 4 + 1] = px[(y * width + x) * 4 + 2] = v;
+                    }
+                if (i + 1 < score.Length)
+                    at += ScoreFinder.Advance(score[i], score[i + 1]);
+            }
+            return px;
+        }
+
+        private static void AssertNear(System.Drawing.Rectangle expected, System.Drawing.Rectangle actual, int within)
+        {
+            Assert.True(System.Math.Abs(expected.Left - actual.Left) <= within
+                && System.Math.Abs(expected.Top - actual.Top) <= within
+                && System.Math.Abs(expected.Right - actual.Right) <= within
+                && System.Math.Abs(expected.Bottom - actual.Bottom) <= within,
+                $"expected {expected} within {within} px, got {actual}");
+        }
+
+        private static GameFinder Run(GameFinder finder, byte backdrop, string score, System.Drawing.Rectangle picture,
+            int frames, int width = W, int height = H, System.Drawing.Rectangle other = default)
+        {
+            var area = new System.Drawing.Rectangle(0, 0, width, height);
+            for (int i = 0; i < frames; i++)
+                if (finder.Feed(Frame(i, backdrop, score, picture, width, height, other), width, height, width * 4, false, area)
+                    && !finder.Refining)
+                    break;
+            return finder;
+        }
+
+        [Fact]
+        public void DetectFindsThePictureOnBlackThoughPartOfItIsStill()
+        {
+            // no score: as on the game's menu
+            GameFinder f = Run(GameFinder.Detect(8), 0, "", Picture, 12);
+            Assert.False(f.Verified);
+            AssertNear(Picture, f.Result, 2);
+        }
+
+        [Fact]
+        public void DetectFindsAStretchedPictureAmongOtherThingsThatMove()
+        {
+            // 16:9 on a lit backdrop, with a smaller moving box beside it
+            var wide = new System.Drawing.Rectangle(20, 30, 560, 315);
+            var webcam = new System.Drawing.Rectangle(600, 30, 180, 130);
+            GameFinder f = Run(GameFinder.Detect(8), 60, "", wide, 12, 800, 450, webcam);
+            AssertNear(wide, f.Result, 3);
+        }
+
+        [Fact]
+        public void SnapMovesAHandDrawnBoxOntoThePicturesEdges()
+        {
+            var picture = new System.Drawing.Rectangle(60, 40, 480, 360);
+            byte[] px = Frame(1, 60, "", picture);
+            var drawn = new System.Drawing.Rectangle(picture.X + 9, picture.Y + 12, picture.Width - 20, picture.Height - 8);
+            AssertNear(picture, GameFinder.Snap(px, W, H, W * 4, false, drawn), 1);
+        }
+
+        [Fact]
+        public void CheckFitsASloppyCropToTheScore()
+        {
+            var sloppy = new System.Drawing.Rectangle(Picture.X + 20, Picture.Y - 25, Picture.Width - 30, Picture.Height + 40);
+            GameFinder f = Run(GameFinder.Check(sloppy), 0, "239800", Picture, 200);
+            Assert.True(f.Verified);
+            AssertNear(Picture, f.Result, 10); // 2% of its height: reading takes 4%
+        }
+
+        [Fact]
+        public void CheckFindsTheScoreAnywhereWhenTheCropIsPlainWrong()
+        {
+            var wrong = new System.Drawing.Rectangle(300, 100, 200, 150);
+            GameFinder f = Run(GameFinder.Check(wrong), 0, "239800", Picture, 1500);
+            Assert.True(f.Verified);
+            AssertNear(Picture, f.Result, 10);
+        }
+
+        [Fact]
+        public void CheckFindsNothingWithoutAScore()
+        {
+            GameFinder f = Run(GameFinder.Check(Picture), 0, "", Picture, 60);
+            Assert.False(f.Verified);
+        }
+
+        [Fact]
+        public void RecenterMovesACropWhoseEdgeCutsIntoTheScore()
+        {
+            var crop = new System.Drawing.Rectangle(100, 0, 617, 474);
+            // first digit found 4 px into the margin: 20 px left of the crop
+            Assert.Equal(new System.Drawing.Rectangle(72, 0, 617, 474), ScoreBand.Recenter(crop, ScoreBand.LeftMargin - 20));
+            Assert.Equal(crop, ScoreBand.Recenter(crop, ScoreBand.LeftMargin + 3));
+        }
+    }
+
     public class RouteCsvTests
     {
         [Fact]
