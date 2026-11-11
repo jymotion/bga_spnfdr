@@ -17,7 +17,9 @@ Windows and Linux.
 2. The program attempts to **auto-detect the game feed** within the window by
    watching for movement for a few seconds. If it fails to accurately crop
    the game feed, you can click **Re-try Automatic Crop** to try again or
-   manually crop it yourself.
+   manually crop it yourself. If the captured window later changes size,
+   the crop no longer fits, so the program detects the game feed again
+   (and doesn't read the score until it has).
 3. **Select Route CSV** — column 1 = score, column 2 = note text (quoted
    multi-line notes work, blank lines included; a one-line note may hold
    commas without quotes). When the confirmed score matches a CSV row, its
@@ -122,7 +124,13 @@ and each read copies back only the score strip, so reading 30 times a
 second stays cheap whatever the window's size. On a test PC it took
 0.36 ms per read against 2.6 ms for PrintWindow, and used less CPU in total
 than PrintWindow at 30 reads a second. On older Windows, or if it fails, the
-app falls back to PrintWindow at 10 reads a second.
+app falls back to PrintWindow at 10 reads a second. Windows only sends a
+new picture when the window changes; a read that would see the same picture
+again is skipped (every third in a row still happens, so a score confirms
+on a paused game too).
+
+The Linux app asks the desktop for at most 30 frames a second (GNOME and
+KDE honor that) and copies only the score strip out of each.
 
 ## Safeguards
 

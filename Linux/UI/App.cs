@@ -182,7 +182,9 @@ namespace BgaSpnfdr.UI
 
         private bool Tick()
         {
-            _processor.WantSnapshots = SetupVisible || _detector != null;
+            bool visible = SetupVisible;
+            _processor.WantSnapshots = visible || _detector != null;
+            _processor.WantStatus = visible;
 
             // the shared window changed size: the old crop no longer fits
             // (once per size, so a failed detection doesn't loop)
@@ -195,6 +197,9 @@ namespace BgaSpnfdr.UI
                 {
                     if (!_settings.Crop.IsEmpty)
                         ShowSticky("The shared window changed size — re-detecting the game feed.");
+                    // the old crop is for another size: reading through it
+                    // would only produce misreads
+                    _processor.Configure(Rectangle.Empty, _route);
                     StartAutoCrop(AutoCropFramesInitial);
                 }
             }
@@ -212,7 +217,8 @@ namespace BgaSpnfdr.UI
                 text = "Waiting for the first frame from the shared window…";
             else
                 text = _processor.Status;
-            gtk_label_set_text(_status, text);
+            if (visible)
+                gtk_label_set_text(_status, text);
             return true;
         }
 
@@ -274,6 +280,8 @@ namespace BgaSpnfdr.UI
             _stream?.Dispose();
             _stream = null;
             _capturing = false;
+            if (_detector != null) // it may have set the crop aside (Tick)
+                _processor.Configure(_settings.Crop, _route);
             _detector = null;
         }
 
@@ -325,7 +333,10 @@ namespace BgaSpnfdr.UI
                 Rectangle box = _detector.Result;
                 _detector = null;
                 if (box.IsEmpty)
+                {
+                    _processor.Configure(_settings.Crop, _route); // back to the crop there was
                     ShowSticky("Couldn't auto-detect the game feed — use \"Manually Crop Gamefeed\".");
+                }
                 else
                 {
                     SetCrop(box);

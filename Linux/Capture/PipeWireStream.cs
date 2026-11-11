@@ -78,12 +78,16 @@ namespace BgaSpnfdr.Capture
                 *(IntPtr*)(ev + EvProcess) = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, void>)&OnProcess;
                 pw_stream_add_listener(_stream, _hook, _events, GCHandle.ToIntPtr(_self));
 
-                byte[] format = BuildEnumFormat();
-                fixed (byte* f = format)
+                // preferred first: at most 30 frames a second, then any rate,
+                // in case a desktop can't agree to the limit
+                byte[] limited = BuildEnumFormat(true), any = BuildEnumFormat(false);
+                fixed (byte* a = limited, b = any)
                 {
-                    IntPtr param = (IntPtr)f;
+                    IntPtr* formats = stackalloc IntPtr[2];
+                    formats[0] = (IntPtr)a;
+                    formats[1] = (IntPtr)b;
                     int rc = pw_stream_connect(_stream, PW_DIRECTION_INPUT, nodeId,
-                        PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS, &param, 1);
+                        PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS, formats, 2);
                     if (rc < 0)
                         throw new InvalidOperationException($"could not connect the PipeWire stream ({rc})");
                 }
@@ -95,8 +99,11 @@ namespace BgaSpnfdr.Capture
         }
 
         /// <summary>The formats we accept: 32-bit RGB in either byte order,
-        /// any size, any frame rate (we pick 30 a second ourselves).</summary>
-        internal static byte[] BuildEnumFormat()
+        /// any size, any frame rate (we pick 30 a second ourselves). With
+        /// limitRate the desktop is also asked to send at most 30 frames a
+        /// second (GNOME and KDE honor it), so it doesn't copy out frames
+        /// of a 60-a-second window that FrameProcessor would only drop.</summary>
+        internal static byte[] BuildEnumFormat(bool limitRate)
         {
             var w = new PodWriter();
             int obj = w.BeginObject(SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat);
@@ -109,6 +116,11 @@ namespace BgaSpnfdr.Capture
             w.PairRange(SPA_TYPE_Rectangle, (640, 480), (1, 1), (8192, 8192));
             w.Prop(SPA_FORMAT_VIDEO_framerate);
             w.PairRange(SPA_TYPE_Fraction, (30, 1), (0, 1), (360, 1));
+            if (limitRate)
+            {
+                w.Prop(SPA_FORMAT_VIDEO_maxFramerate);
+                w.PairRange(SPA_TYPE_Fraction, (30, 1), (1, 1), (30, 1));
+            }
             w.EndObject(obj);
             return w.ToArray();
         }

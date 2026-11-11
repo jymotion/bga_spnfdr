@@ -56,6 +56,11 @@ namespace BgaSpnfdr
         /// host app may overwrite it.</summary>
         public string Status = "Waiting for the score";
 
+        /// <summary>False while nobody can see Status (setup window hidden):
+        /// it is then left as it was instead of being rebuilt on every
+        /// read.</summary>
+        public bool WantStatus = true;
+
 #if PERF_TEST
         /// <summary>Windows 30-reads-a-second test build only.</summary>
         public long Confirmed => _confirmedScore;
@@ -75,14 +80,14 @@ namespace BgaSpnfdr
             // zero means a fragment (a lost "2" makes 039950 out of 239950)
             if (read.Length > 1 && read[0] == '0')
             {
-                Status = $"read \"{read}\" rejected (leading zero)";
+                if (WantStatus) Status = $"read \"{read}\" rejected (leading zero)";
                 return null;
             }
 
             // Safeguard: absurdly long reads are garbage
             if (read.Length > BattleTanx.MaxScoreDigits)
             {
-                Status = $"read \"{read}\" rejected (too long)";
+                if (WantStatus) Status = $"read \"{read}\" rejected (too long)";
                 return null;
             }
 
@@ -90,7 +95,7 @@ namespace BgaSpnfdr
             long value = long.Parse(read);
             if (value % BattleTanx.ScoreMultiple != 0)
             {
-                Status = $"read {value} rejected (not a multiple of {BattleTanx.ScoreMultiple})";
+                if (WantStatus) Status = $"read {value} rejected (not a multiple of {BattleTanx.ScoreMultiple})";
                 return null;
             }
             return read;
@@ -110,7 +115,7 @@ namespace BgaSpnfdr
             if (candidate != null && _confirmedScore >= 0 && leftMatch >= FragmentMatch
                 && long.Parse(candidate) < _confirmedScore)
             {
-                Status = $"read {candidate} rejected (end of a longer score)";
+                if (WantStatus) Status = $"read {candidate} rejected (end of a longer score)";
                 candidate = null;
             }
             if (candidate == null)
@@ -120,7 +125,7 @@ namespace BgaSpnfdr
                 _pendingRead = null;
                 _pendingCount = 0;
                 if (string.IsNullOrEmpty(read))
-                    Status = _confirmedScore >= 0
+                    if (WantStatus) Status = _confirmedScore >= 0
                         ? $"no digits visible — holding {_confirmedScore}"
                         : "no digits visible";
                 return null;
@@ -146,7 +151,7 @@ namespace BgaSpnfdr
             int required = suspicious ? BackwardConfirmReads : ConfirmReads;
             if (_pendingCount < required)
             {
-                Status = $"reading {score} ({_pendingCount}/{required})";
+                if (WantStatus) Status = $"reading {score} ({_pendingCount}/{required})";
                 return null;
             }
 
@@ -156,7 +161,7 @@ namespace BgaSpnfdr
                 _confirmedScore = score;
                 route.TryGetValue(score, out note);
             }
-            Status = route.ContainsKey(score)
+            if (WantStatus) Status = route.ContainsKey(score)
                 ? $"score {score} (note shown)"
                 : $"score {score}";
             return note;

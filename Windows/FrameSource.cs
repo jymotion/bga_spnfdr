@@ -54,12 +54,24 @@ namespace BgaSpnfdr
         public byte[] Rows = new byte[0];
         public int Stride, First, Last = -1;
 
+        /// <summary>False when Rows are still the previous Capture's: Windows
+        /// sent no new picture since (the window didn't change), so nothing
+        /// was copied.</summary>
+        public bool Fresh;
+
+        // the frame, crop and window size Rows were last copied for
+        private int _stripFrame;
+        private Rectangle _stripCrop;
+        private Size _stripSize;
+        private int _stripFirst, _stripLast;
+
         /// <summary>Captures what this tick needs: the rows under the score
         /// band for crop, and the whole picture if fullFrame. False if the
         /// window is gone or minimized, or the capture failed.</summary>
         public bool Capture(IntPtr hWnd, Rectangle crop, bool fullFrame)
         {
             Last = -1;
+            Fresh = true;
             UsedGraphicsCapture = false;
             if (hWnd == IntPtr.Zero || !Native.IsWindow(hWnd) || Native.IsIconic(hWnd))
                 return false;
@@ -102,6 +114,7 @@ namespace BgaSpnfdr
         private bool CapturePrintWindow(IntPtr hWnd, Rectangle crop)
         {
             var bmp = _printWindow.Capture(hWnd);
+            _stripFrame = 0; // Rows are about to hold something else
             if (bmp == null)
                 return false;
             Frame = bmp;
@@ -154,7 +167,14 @@ namespace BgaSpnfdr
             // the picture's place in PrintWindow coordinates, cut to the window
             var picture = Rectangle.Intersect(new Rectangle(origin, _graphics.Size), new Rectangle(Point.Empty, Size));
 
-            if (crop.Width > 0 && crop.Height > 0)
+            if (_graphics.FrameNumber == _stripFrame && crop == _stripCrop && Size == _stripSize)
+            {
+                // same picture as last time: Rows already hold its strip
+                First = _stripFirst;
+                Last = _stripLast;
+                Fresh = false;
+            }
+            else if (crop.Width > 0 && crop.Height > 0)
             {
                 ScoreBand.RowsNeeded(crop, Size.Height, out int first, out int last);
                 ScoreBand.ColumnsNeeded(crop, Size.Width, out int left, out int right);
@@ -178,6 +198,11 @@ namespace BgaSpnfdr
                     First = first;
                     Last = last;
                 }
+                _stripFrame = _graphics.FrameNumber;
+                _stripCrop = crop;
+                _stripSize = Size;
+                _stripFirst = First;
+                _stripLast = Last;
             }
 
             if (fullFrame)
@@ -230,6 +255,7 @@ namespace BgaSpnfdr
             _graphics = null;
             _graphicsWindow = IntPtr.Zero;
             _bitmapFrame = 0; // a new session counts its frames from 1 again
+            _stripFrame = 0;
         }
 
         public void Dispose()

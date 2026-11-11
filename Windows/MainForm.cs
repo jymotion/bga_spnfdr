@@ -49,6 +49,18 @@ namespace BgaSpnfdr
         private readonly ScoreTracker _tracker = new ScoreTracker();
         private readonly byte[] _band = new byte[ScoreBand.Width * ScoreBand.Rows];
         private Rectangle _readCrop;             // crop the reader is calibrated for
+
+        // With Windows.Graphics.Capture a tick can find the picture it read
+        // last time (the window didn't change in between). Reading it again
+        // would count one picture twice towards a score's confirmation, so
+        // such ticks are skipped; but every StaleReadEvery-th in a row is
+        // read, so a score still confirms on a picture that stays still
+        // (a paused game).
+        private const int StaleReadEvery = 3;
+        private int _staleTicks;
+
+        private Size _sizeChecked; // capture-window size the crop was last checked against
+        private bool _cropStale;   // the window changed size: no reading until re-detected
 #if PERF_TEST
         private readonly PerfTest _perf = new PerfTest();
 #endif
@@ -241,12 +253,14 @@ namespace BgaSpnfdr
 
             Rectangle box = _detector.Result;
             _detector = null;
+            _cropStale = false; // re-detected, or (if that failed) back to the crop there was
             if (box.IsEmpty)
             {
                 ShowStickyStatus("Couldn't auto-detect the game feed — use \"Manually Crop Gamefeed\".");
                 return;
             }
             _settings.Crop = box;
+            _settings.CropWindowSize = _sizeChecked = _source.Size;
             SaveSettings();
             _previewBox.Invalidate();
             ShowStickyStatus(
@@ -328,6 +342,7 @@ namespace BgaSpnfdr
                 _previewBox.Invalidate();
                 return;
             }
+            _settings.CropWindowSize = _sizeChecked = _source.Size;
             SaveSettings();
             _previewBox.Invalidate();
             ExitManualCrop(); // one crop per button press
@@ -456,7 +471,12 @@ namespace BgaSpnfdr
 #if PERF_TEST
             var readTime = System.Diagnostics.Stopwatch.StartNew();
 #endif
-            ReadScore();
+            CheckWindowSize();
+            _tracker.WantStatus = Visible; // nobody sees it otherwise
+            if (_source.Fresh)
+                _staleTicks = 0;
+            if (!_cropStale && (_source.Fresh || ++_staleTicks % StaleReadEvery == 0))
+                ReadScore();
 #if PERF_TEST
             _perf.OnRead(readTime.Elapsed.TotalMilliseconds, _tracker.Confirmed);
 #endif
@@ -483,6 +503,29 @@ namespace BgaSpnfdr
 #else
                 _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus : _tracker.Status;
 #endif
+            }
+        }
+
+        /// <summary>The crop is in capture-window pixels, so it no longer fits
+        /// once that window changes size: detect the game feed again (once
+        /// per size, so a failed detection doesn't loop).</summary>
+        private void CheckWindowSize()
+        {
+            Size size = _source.Size;
+            if (size == _sizeChecked || _detector != null || _manualCropMode || _settings.Crop.IsEmpty)
+                return;
+            _sizeChecked = size;
+            if (_settings.CropWindowSize.IsEmpty)
+            {
+                // a crop saved by an earlier version: take it to fit this size
+                _settings.CropWindowSize = size;
+                SaveSettings();
+            }
+            else if (_settings.CropWindowSize != size)
+            {
+                _cropStale = true;
+                ShowStickyStatus("The capture window changed size — re-detecting the game feed.");
+                StartAutoCrop(AutoCropFramesInitial);
             }
         }
 

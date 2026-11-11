@@ -63,7 +63,7 @@ namespace BgaSpnfdr.Native
         public const uint SPA_CHOICE_Range = 1, SPA_CHOICE_Enum = 3;
         public const uint SPA_FORMAT_mediaType = 1, SPA_FORMAT_mediaSubtype = 2;
         public const uint SPA_FORMAT_VIDEO_format = 0x20001, SPA_FORMAT_VIDEO_size = 0x20003,
-                          SPA_FORMAT_VIDEO_framerate = 0x20004;
+                          SPA_FORMAT_VIDEO_framerate = 0x20004, SPA_FORMAT_VIDEO_maxFramerate = 0x20005;
         public const uint SPA_MEDIA_TYPE_video = 2, SPA_MEDIA_SUBTYPE_raw = 1;
         public const uint SPA_VIDEO_FORMAT_RGBx = 7, SPA_VIDEO_FORMAT_BGRx = 8,
                           SPA_VIDEO_FORMAT_RGBA = 11, SPA_VIDEO_FORMAT_BGRA = 12;

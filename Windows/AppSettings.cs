@@ -14,6 +14,7 @@ namespace BgaSpnfdr
     {
         public string WindowTitle = string.Empty;
         public Rectangle Crop = Rectangle.Empty;
+        public Size CropWindowSize = Size.Empty; // capture-window size the crop was made for
         public string CsvPath = string.Empty;
         public float NotesFontSize = 48f;
         public string NotesFontFamily = "Segoe UI";
@@ -65,6 +66,10 @@ namespace BgaSpnfdr
                     case "Crop":
                         s.Crop = ParseRect(value, s.Crop);
                         break;
+                    case "CropWindowSize":
+                        var size = ParseRect(value + ",0,0", Rectangle.Empty);
+                        s.CropWindowSize = new Size(size.X, size.Y);
+                        break;
                     case "Csv":
                         s.CsvPath = value;
                         break;
@@ -115,6 +120,7 @@ namespace BgaSpnfdr
                 {
                     "Window=" + WindowTitle,
                     $"Crop={Crop.X},{Crop.Y},{Crop.Width},{Crop.Height}",
+                    $"CropWindowSize={CropWindowSize.Width},{CropWindowSize.Height}",
                     "Csv=" + CsvPath,
                     "NotesFont=" + NotesFontSize.ToString(CultureInfo.InvariantCulture),
                     "NotesFontFamily=" + NotesFontFamily,

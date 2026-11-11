@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
-using System.Runtime.InteropServices;
 using BgaSpnfdr.Capture;
 
 namespace BgaSpnfdr
@@ -49,6 +48,9 @@ namespace BgaSpnfdr
         public volatile int FrameWidth, FrameHeight;
         public string Status => _tracker.Status;
 
+        /// <summary>UI thread: whether the status text is being shown.</summary>
+        public bool WantStatus { set => _tracker.WantStatus = value; }
+
         /// <summary>UI thread: new crop and/or route table.</summary>
         public void Configure(Rectangle crop, Dictionary<long, string> route) =>
             _config = new Config { Crop = crop, Route = route ?? new Dictionary<long, string>() };
@@ -75,7 +77,14 @@ namespace BgaSpnfdr
                     int n = (last - first + 1) * f.Stride;
                     if (_rows.Length < n)
                         _rows = new byte[n];
-                    Marshal.Copy((IntPtr)(f.Data + (long)first * f.Stride), _rows, 0, n);
+                    // only the columns under the band: the rest of each row
+                    // is never read (ScoreBand.Fill)
+                    ScoreBand.ColumnsNeeded(cfg.Crop, f.Width, out int left, out int right);
+                    long columns = (right - left + 1) * 4L;
+                    fixed (byte* rows = _rows)
+                        for (int y = first; y <= last; y++)
+                            Buffer.MemoryCopy(f.Data + (long)y * f.Stride + left * 4,
+                                rows + (long)(y - first) * f.Stride + left * 4, columns, columns);
                     ScoreBand.Fill(_rows, f.Stride, first, last, f.Width, cfg.Crop, f.RgbOrder, _band);
                     string read = _reader.Read(_band, ScoreBand.Width, ScoreBand.Rows);
                     string note = _tracker.HandleRead(read, cfg.Route, _reader.LeftMatch);
