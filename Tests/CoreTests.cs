@@ -246,12 +246,30 @@ namespace BgaSpnfdr.Tests
         }
 
         [Fact]
-        public void SnapMovesAHandDrawnBoxOntoThePicturesEdges()
+        public void DetectRecognisesTheMenuThoughSomethingElseMoves()
         {
-            var picture = new System.Drawing.Rectangle(60, 40, 480, 360);
-            byte[] px = Frame(1, 60, "", picture);
-            var drawn = new System.Drawing.Rectangle(picture.X + 9, picture.Y + 12, picture.Width - 20, picture.Height - 8);
-            AssertNear(picture, GameFinder.Snap(px, W, H, W * 4, false, drawn), 1);
+            // the menu, still, stretched to 16:9 on a dim backdrop, beside a
+            // box of moving noise: nothing about the game moves
+            var menu = new System.Drawing.Rectangle(250, 100, 480, 270);
+            var webcam = new System.Drawing.Rectangle(20, 40, 200, 150);
+            const int width = 800, height = 450;
+            var area = new System.Drawing.Rectangle(0, 0, width, height);
+            GameFinder f = GameFinder.Detect(40);
+            int frames = 0;
+            for (bool done = false; !done && frames < 20; frames++)
+            {
+                byte[] px = Frame(frames, 30, "", System.Drawing.Rectangle.Empty, width, height, webcam);
+                for (int y = menu.Top; y < menu.Bottom; y++)
+                    for (int x = menu.Left; x < menu.Right; x++)
+                    {
+                        byte v = MenuFinder.Value((x - menu.X) * 48 / menu.Width, (y - menu.Y) * 36 / menu.Height);
+                        px[(y * width + x) * 4] = px[(y * width + x) * 4 + 1] = px[(y * width + x) * 4 + 2] = v;
+                    }
+                done = f.Feed(px, width, height, width * 4, false, area);
+            }
+            Assert.True(f.Recognized);
+            Assert.InRange(frames, 1, 3); // at once, not after watching for 4 s
+            AssertNear(menu, f.Result, 4);
         }
 
         [Fact]

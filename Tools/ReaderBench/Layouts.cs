@@ -10,9 +10,9 @@ namespace BgaSpnfdr.Bench
     /// <summary>
     /// Puts the reference run into the kinds of picture the apps get
     /// captured (with ffmpeg), feeds each to Core/GameFinder the way the apps
-    /// do (10 frames a second: Detect or a hand-drawn box, then Check until
-    /// the score confirms it), and says how close the crop is to the truth at
-    /// setup and once the score has been found.
+    /// do (10 frames a second: Detect, or a wrong crop to start from, then
+    /// Check until the score confirms it), and says how close the crop is to
+    /// the truth at setup and once the score has been found.
     ///
     /// Usage: dotnet run -c Release --project Tools/ReaderBench -- layouts [footage dir]
     ///
@@ -32,6 +32,14 @@ namespace BgaSpnfdr.Bench
         private const string Beside = "mandelbrot=s=480x360:r=10[cam];[x1][cam]overlay=1380:60[x2];testsrc2=s=200x150:r=10[gif];" +
                                       "[x2][gif]overlay=1400:800,drawtext=text='%{pts\\:hms}':x=1380:y=500:fontsize=64:fontcolor=white";
 
+        // The capturing program's own window, as a tester had it: grey
+        // panels, and in its black preview a still image and a moving webcam
+        // 20 px left of the game (stretched to 16:9), with moving meters below
+        private const string Window = "color=c=0x1e1e1e:s=1920x1080:r=10,drawbox=x=300:y=100:w=1300:h=700:color=black:t=fill," +
+                                      "drawbox=x=310:y=110:w=250:h=190:color=white:t=fill[bg];";
+        private const string InWindow = "[bg][g]overlay=580:110[x1];mandelbrot=s=250x190:r=10[cam];[x1][cam]overlay=310:320[x2];" +
+                                        "testsrc2=s=300x60:r=10[m];[x2][m]overlay=320:900";
+
         public static int Run(string footage)
         {
             string part = System.IO.Path.Combine(footage, "part00.mp4");
@@ -48,25 +56,31 @@ namespace BgaSpnfdr.Bench
             var projector = new RectangleF(271.5f, 4.5f, 1388.25f, 1066.5f);
             var wide = new RectangleF(42, 4.5f, 1851, 1066.5f);
             var inStream = new RectangleF(68, 64, 1234, 948);
+            var inWindow = new RectangleF(601, 112.25f, 925.5f, 533.25f);
+            string window = $"{Window}[0:v]fps=10,scale=960:540[g];{InWindow}";
 
             Console.WriteLine("-- set up on the menu, then the run starts");
             One("capture as is (640x480)", 640, 480, raw, null, 500, menu + "\"");
             One("projector, black around (1080p)", 1920, 1080, projector, null, 500, menu + ",scale=1440:1080,pad=1920:1080:240:0:black\"");
             One("stretched to 16:9 (1080p)", 1920, 1080, wide, null, 500, menu + ",scale=1920:1080\"");
             One("stream layout", 1920, 1080, inStream, null, 500, $"-i \"{part}\" -filter_complex \"{streamMenu}\"");
+            One("capturing program's own window", 1920, 1080, inWindow, null, 500,
+                $"-i \"{part}\" -filter_complex \"{Window}{Menu},scale=960:540[g];{InWindow}\"");
             Console.WriteLine("-- set up during play");
+            One("capturing program's own window", 1920, 1080, inWindow, null, 400, At(147) + $" -filter_complex \"{window}\"");
             foreach (int t in new[] { 40, 100, 165, 237 })
             {
                 One($"capture as is, {t} s in", 640, 480, raw, null, 300, At(t) + " -vf fps=10");
                 One($"stretched to 16:9, {t} s in", 1920, 1080, wide, null, 300, At(t) + " -vf fps=10,scale=1920:1080");
                 One($"stream layout, {t} s in", 1920, 1080, inStream, null, 300, At(t) + $" -filter_complex \"{stream}\"");
             }
-            Console.WriteLine("-- boxes drawn by hand on the menu (capture as is; the picture is 14,2 617x474)");
+            Console.WriteLine("-- starting from a wrong crop, during play (capture as is; the picture is 14,2 617x474)");
             foreach (string box in new[] { "5,0,630,478", "30,20,590,440", "60,10,570,460", "0,0,640,480", "100,80,400,300", "14,2,300,474" })
-                One("box " + box, 640, 480, raw, box, 600, menu + "\"");
-            Console.WriteLine("-- boxes drawn by hand during play, stream layout (the picture is 68,64 1234x948)");
+                One("crop " + box, 640, 480, raw, box, 600, At(8) + " -vf fps=10");
+            Console.WriteLine("-- starting from a wrong crop, during play, stream layout (the picture is 68,64 1234x948)");
             foreach (string box in new[] { "30,50,1300,980", "120,100,1150,880", "60,60,1700,960", "0,0,1920,1080" })
-                One("box " + box, 1920, 1080, inStream, box, 600, At(147) + $" -filter_complex \"{stream}\"");
+                One("crop " + box, 1920, 1080, inStream, box, 600, At(147) + $" -filter_complex \"{stream}\"");
+            One("whole window (capturing program's)", 1920, 1080, inWindow, "0,0,1920,1080", 600, At(147) + $" -filter_complex \"{window}\"");
             Console.WriteLine("-- no game in the frame at all: must stay unconfirmed");
             One("webcam, animation and timer only", 1920, 1080, inStream, null, 600,
                 $"-f lavfi -i \"{Backdrop};mandelbrot=s=1280x960:r=10[g];[bg][g]overlay=40:60[x1];{Beside}\"");
@@ -101,8 +115,8 @@ namespace BgaSpnfdr.Bench
                 if (k == 0 && box != null)
                 {
                     int[] b = box.Split(',').Select(int.Parse).ToArray();
-                    crop = GameFinder.Snap(px, w, h, w * 4, false, new Rectangle(b[0], b[1], b[2], b[3]));
-                    setup = "as drawn: " + Compare(crop, truth);
+                    crop = new Rectangle(b[0], b[1], b[2], b[3]);
+                    setup = "to start with: " + Compare(crop, truth);
                     detecting = false;
                     finder = GameFinder.Check(crop);
                 }
@@ -120,9 +134,11 @@ namespace BgaSpnfdr.Bench
                 crop = finder.Result;
                 if (detecting)
                 {
-                    setup = "at setup: " + Compare(crop, truth);
+                    setup = $"at setup, after {(k + 1) / 10.0:F1} s{(finder.Recognized ? ", by the menu" : "")}: " + Compare(crop, truth);
                     detecting = false;
                 }
+                else if (finder.Recognized)
+                    after = $"menu recognised at {(k + 1) / 10.0:F1} s; " + after;
                 if (finder.Verified)
                 {
                     if (!found)

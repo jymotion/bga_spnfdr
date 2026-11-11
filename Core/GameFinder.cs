@@ -6,29 +6,33 @@ namespace BgaSpnfdr
 {
     /// <summary>
     /// Finds the game picture in what is captured, which may hold much more
-    /// than the game: window chrome, a stream layout, a webcam, animations.
-    /// Shared by both apps, which feed it whole frames (~10 a second).
+    /// than the game: window chrome, a stream layout, a webcam, animations,
+    /// the capturing program's own window. Shared by both apps, which feed
+    /// it whole frames (~10 a second). There is no cropping by hand: a box
+    /// drawn by hand would have to be right to within a few pixel rows.
     ///
-    /// Two jobs, because the program is usually set up on the game's menu,
-    /// where there is no score to go by:
+    /// The program is usually set up on the game's menu, where there is no
+    /// score to go by and nothing in the game moves. So:
     ///
-    ///  - Detect: no score needed. Watches a few seconds for what moves,
-    ///    takes the largest moving region and grows it to the picture's own
-    ///    edge (the black around it, or a straight line where a backdrop
-    ///    starts): a still sky or a mostly still menu doesn't move, but it is
-    ///    part of the picture. Nothing is assumed about the picture's shape,
-    ///    so a stretched one is found the same way. The user sees the result
-    ///    in the preview and can correct it by hand (Snap tidies a hand-drawn
-    ///    box onto the picture's edges).
+    ///  - Detect first looks for the menu itself (Core/MenuFinder): if it is
+    ///    showing, that says exactly where the picture is, at once. Failing
+    ///    that, it watches a few seconds for what moves, takes the largest
+    ///    moving region and grows it to the picture's own edge (the black
+    ///    around it, or a straight line where a backdrop starts): a still
+    ///    sky doesn't move, but it is part of the picture. Nothing is
+    ///    assumed about the picture's shape, so a stretched one is found
+    ///    the same way. The user sees the result in the preview.
     ///
-    ///  - Check: once a score is on screen, looks for it with Core/ScoreFinder
-    ///    near the crop there is and, failing that, anywhere in the frame.
-    ///    Where the score really is fixes the picture far more exactly than
-    ///    any box, and tells the game from everything else that moves: only
-    ///    the game has a BattleTanx score in it. A find must repeat on a
-    ///    later frame before it is believed (Feed then returns the picture,
-    ///    with Refining set); a few more over the next seconds settle its
-    ///    height, which one frame can put 3% off (Feed returns again).
+    ///  - Check runs after that until a score has been found. It looks for
+    ///    the menu now and then (the game may get to it later), and for the
+    ///    score with Core/ScoreFinder: near the crop there is and, failing
+    ///    that, anywhere in the frame. Where the score really is fixes the
+    ///    picture far more exactly than a guess from movement, and tells
+    ///    the game from everything else that moves: only the game has a
+    ///    BattleTanx score in it. A find must repeat on a later frame
+    ///    before it is believed (Feed then returns the picture, with
+    ///    Refining set); a few more over the next seconds settle it (Feed
+    ///    returns again).
     /// </summary>
     internal sealed class GameFinder
     {
@@ -48,9 +52,10 @@ namespace BgaSpnfdr
         // While checking: the crop itself is tried this often (in frames)
         private const int NearEvery = 10;
         // A find is sampled this many times, this many frames apart
-        // (more if the picture's left edge hasn't shown by then: a dark
-        // scene hides it against a black border)
-        private const int Samples = 7, SampleGap = 3, SampleTries = 14, EdgeTries = 40;
+        private const int Samples = 7, SampleGap = 3, SampleTries = 14;
+        // The game's menu is looked for this often (in frames) while
+        // watching for motion and while checking
+        private const int MenuEveryDetect = 5, MenuEveryCheck = 30;
 
         private enum Stage { Motion, Near, Wide, Anywhere, Done }
 
@@ -69,7 +74,16 @@ namespace BgaSpnfdr
         private readonly List<ScoreFinder.Probe> _plan = new List<ScoreFinder.Probe>();
         private int _next;
         private readonly List<ScoreFinder.Hit> _finds = new List<ScoreFinder.Hit>();
-        private readonly List<int> _findLefts = new List<int>(); // the picture's left edge, where one could be seen
+        private readonly MenuFinder _menu = new MenuFinder();
+        private Rectangle _menuAt;   // where the menu was last recognised (to be seen twice)
+        private int _fed;            // frames fed
+        private bool _menuReported;  // Check: the menu has been recognised once
+
+        // What is seen left of a find over its samples, for the picture's
+        // left edge (Watch, LeftEdge): rows x columns of the frame
+        private int _watchX, _watchColumns, _watchSamples;
+        private int[] _watchRows, _watchMoved, _watchEdges;
+        private byte[] _watchLast, _watchMost;
         private readonly List<int> _findTops = new List<int>();  // its top edge, where one could be seen
         private byte[] _px;                                      // the frame being fed
         private int _stride;
@@ -107,6 +121,14 @@ namespace BgaSpnfdr
         /// feeding, and it returns true once more with a steadier Result.</summary>
         public bool Refining;
 
+        /// <summary>Set once Feed returns true: Result is where the game's
+        /// menu was recognised (Core/MenuFinder); no score yet.</summary>
+        public bool Recognized;
+
+        /// <summary>Check: the menu has been recognised right where the crop
+        /// being checked is (which Feed doesn't stop for).</summary>
+        public bool MenuSeen;
+
         /// <summary>Takes one frame (4 bytes per pixel, R and B order given
         /// by rgbOrder); area is the part of it that can hold the game (a
         /// window's client area, or all of it). True when finished.</summary>
@@ -137,8 +159,8 @@ namespace BgaSpnfdr
                 _plan.Clear();
                 _next = 0;
                 _finds.Clear();
-                _findLefts.Clear();
                 _findTops.Clear();
+                _menuAt = Rectangle.Empty;
                 if (_detect)
                     _stage = Stage.Motion;
             }
@@ -147,8 +169,13 @@ namespace BgaSpnfdr
             _px = px; _stride = stride; _rgbOrder = rgbOrder;
             if (_finds.Count > 0)
                 return Sample();
+            _fed++;
             if (_stage == Stage.Motion)
             {
+                // the game's menu, if that is what's showing, says exactly
+                // where the picture is, at once
+                if (Menu(MenuEveryDetect))
+                    return true;
                 Accumulate(px, stride, rgbOrder);
                 if (--_framesLeft > 0)
                     return false;
@@ -170,8 +197,20 @@ namespace BgaSpnfdr
             if (_stage == Stage.Done)
                 return true; // Detect, its boxes tried: the first guess stands
 
-            // Check: the crop itself about once a second, so a score that
-            // comes up is caught promptly; the wider search in between
+            // Check: the menu now and then (the program may have been set up
+            // before the game was on it) ...
+            if (Menu(_menuReported ? 4 * MenuEveryCheck : MenuEveryCheck))
+            {
+                _menuReported = true; // from now on only now and then
+                MenuSeen = Math.Abs(Result.X - _crop.X) <= 3 && Math.Abs(Result.Y - _crop.Y) <= 3
+                    && Math.Abs(Result.Right - _crop.Right) <= 3 && Math.Abs(Result.Bottom - _crop.Bottom) <= 3;
+                if (!MenuSeen)
+                    return true; // the crop belongs there instead
+                Result = Rectangle.Empty;
+                Recognized = false;
+            }
+            // ... the crop itself about once a second, so a score that comes
+            // up is caught promptly; the wider search in between
             if (_frame++ % NearEvery == 0)
             {
                 var near = new List<ScoreFinder.Probe>();
@@ -185,6 +224,31 @@ namespace BgaSpnfdr
             if (Changed(px, stride, rgbOrder))
                 Look(CheckMilliseconds);
             return false;
+        }
+
+        /// <summary>Looks for the game's menu every so many frames, and on
+        /// the frame after it was seen: twice in the same place and it is
+        /// believed (true, with Result and Recognized).</summary>
+        private bool Menu(int every)
+        {
+            if (_menuAt.IsEmpty && _fed % every != 1)
+                return false;
+            if (!_menu.Find(_px, _stride, _rgbOrder, _area, out Rectangle at))
+            {
+                _menuAt = Rectangle.Empty;
+                return false;
+            }
+            bool again = !_menuAt.IsEmpty && Math.Abs(at.X - _menuAt.X) <= 3 && Math.Abs(at.Y - _menuAt.Y) <= 3
+                && Math.Abs(at.Right - _menuAt.Right) <= 3 && Math.Abs(at.Bottom - _menuAt.Bottom) <= 3;
+            _menuAt = at;
+            if (!again)
+                return false;
+            Result = at;
+            Recognized = true;
+            Verified = false;
+            if (_detect)
+                _stage = Stage.Done;
+            return true;
         }
 
         /// <summary>Whether this frame differs from the last one fed, going
@@ -237,10 +301,22 @@ namespace BgaSpnfdr
         {
             if (!_finder.Run(probe, out ScoreFinder.Hit hit) || !_finder.Tune(ref hit, probe.MinDigits))
                 return false;
+            if (probe.Hint.IsEmpty)
+            {
+                // found with nothing to say it should be there: a 2-digit
+                // score has to match very well, and the picture it implies
+                // has to be in the frame
+                if (hit.Text.Length < 3 && ScoreFinder.Match(hit) < 0.88)
+                    return false;
+                Rectangle crop = ScoreFinder.Crop(hit, double.NaN);
+                var room = Rectangle.Inflate(_area, _area.Width / 25, _area.Height / 25);
+                if (crop.Top < room.Top || crop.Bottom > room.Bottom || crop.Width > room.Width)
+                    return false;
+            }
             _finds.Add(hit);
-            _findLefts.Clear();
             _findTops.Clear();
-            NoteEdges(hit);
+            Watch(hit, true);
+            NoteTop(hit);
             _sampleTries = 0;
             _sinceSample = 0;
             _reported = false;
@@ -285,27 +361,21 @@ namespace BgaSpnfdr
                 Cols = (int)Math.Ceiling((first.Right - first.Left) / first.Sx) + 60,
                 Rows = DigitReader.BandHeight + 8,
                 MinDigits = 2,
-                HintX = first.HintX,
+                Hint = first.Hint,
             };
             if (_finder.Run(again, out ScoreFinder.Hit hit) && _finder.Tune(ref hit, 2)
                 && Math.Abs(hit.Top - first.Top) <= 2 * first.Sy
                 && Math.Abs(hit.Sy / first.Sy - 1) <= 0.08 && Math.Abs(hit.Sx / first.Sx - 1) <= 0.04)
             {
-                if (_finds.Count < Samples)
-                    _finds.Add(hit);
-                NoteEdges(hit);
+                _finds.Add(hit);
+                Watch(hit, false);
+                NoteTop(hit);
             }
-            _sampleTries++;
-            bool last = _finds.Count >= Samples
-                ? _findLefts.Count >= 2 || _sampleTries >= EdgeTries
-                : _sampleTries >= SampleTries;
+            bool last = _finds.Count >= Samples || ++_sampleTries >= SampleTries;
             if (_finds.Count < 2)
             {
                 if (last)
-                {
                     _finds.Clear(); // not seen again: carry on looking
-                    _findLefts.Clear();
-                }
                 return false;
             }
             if (_reported && !last)
@@ -313,15 +383,16 @@ namespace BgaSpnfdr
 
             var bySize = new List<ScoreFinder.Hit>(_finds);
             bySize.Sort((a, b) => a.Sy.CompareTo(b.Sy));
-            var lefts = new List<int>(_findLefts);
-            lefts.Sort();
             ScoreFinder.Hit middle = bySize[bySize.Count / 2];
             // the width from the longest score seen: its digits' spacing is
             // the longest ruler
             ScoreFinder.Hit latest = _finds[_finds.Count - 1];
             foreach (ScoreFinder.Hit f in _finds)
-                if (f.Text.Length > middle.Text.Length || (f.Text.Length == middle.Text.Length && middle.Sx != f.Sx && f.Text.Length > latest.Text.Length))
+                if (f.Text.Length > middle.Text.Length)
+                {
                     middle.Sx = f.Sx;
+                    middle.Text = f.Text;
+                }
             // The height the digits match best at can be several percent
             // off. The picture's top edge is a far longer ruler: the digits
             // start 423 reference rows below it. Used if frames agree on it.
@@ -337,17 +408,22 @@ namespace BgaSpnfdr
             middle.Top = latest.Top + DigitReader.BandHeight / 2.0 * (latest.Sy - height);
             middle.Sy = height;
             middle.Left = latest.Left; middle.Right = latest.Right;
-            Rectangle crop = _finder.Crop(middle, out _);
-            if (lefts.Count >= 2)
-                crop.X = lefts[lefts.Count / 2]; // the edge as most frames that show one have it
-            Result = crop;
+
+            // A box the score was looked for in and that fits what the score
+            // says is kept as it is: it reads just as well, and it was put
+            // there with more to go by (the menu, the picture's edges) than
+            // the score alone gives, above all for the left edge.
+            Rectangle hint = first.Hint;
+            int left = LeftEdge();
+            Rectangle crop = ScoreFinder.Crop(middle, left >= 0 ? left : hint.IsEmpty ? double.NaN : hint.X);
+            Result = !hint.IsEmpty && Fits(hint, crop, middle) ? hint : crop;
             Verified = true;
+            Recognized = false;
             Refining = !last;
             _reported = true;
             if (last)
             {
                 _finds.Clear();
-                _findLefts.Clear();
                 _findTops.Clear();
                 _stage = Stage.Done;
                 _plan.Clear();
@@ -356,16 +432,120 @@ namespace BgaSpnfdr
             return true;
         }
 
-        /// <summary>Notes where the picture's left and top edges are in this
-        /// frame, going by a find, if they can be seen. The top one is a
-        /// straight edge across the picture, within 8% of the picture's
-        /// height of where the find's own height puts it.</summary>
-        private void NoteEdges(ScoreFinder.Hit hit)
+        /// <summary>Whether a box reads as well as the crop worked out from
+        /// the score: its score band within 3 reference rows, its height
+        /// within 3%, its width between 3% narrower and 6% wider, and the
+        /// score inside it.</summary>
+        private static bool Fits(Rectangle box, Rectangle crop, ScoreFinder.Hit hit)
         {
-            Rectangle crop = _finder.Crop(hit, out bool leftSeen);
-            if (leftSeen)
-                _findLefts.Add(crop.X);
+            double rows = DigitReader.ReferenceCropHeight, band = DigitReader.BandTop / rows;
+            ScoreFinder.LeftRange(hit, out double min, out double max);
+            return Math.Abs(box.Y + band * box.Height - (crop.Y + band * crop.Height)) <= 3 * crop.Height / rows
+                && Math.Abs((double)box.Height / crop.Height - 1) <= 0.03
+                && box.Width >= 0.97 * crop.Width && box.Width <= 1.06 * crop.Width
+                && box.X >= min - 1 && box.X <= max + 1;
+        }
 
+        // ---------- the picture's left edge, from a find ----------
+
+        /// <summary>Takes in what this frame shows left of a find: a strip
+        /// of 48 rows over the picture's height, from as far left as the
+        /// picture can start to just short of the score.</summary>
+        private void Watch(ScoreFinder.Hit hit, bool start)
+        {
+            const int rows = 48;
+            if (start)
+            {
+                ScoreFinder.LeftRange(hit, out double min, out double max);
+                _watchX = Math.Max(0, (int)Math.Floor(min) - 3);
+                _watchColumns = Math.Max(0, Math.Min(_width - 1, (int)max) - _watchX + 1);
+                _watchSamples = 0;
+                double top = hit.Top - DigitReader.BandTop * hit.Sy, h = DigitReader.ReferenceCropHeight * hit.Sy;
+                _watchRows = new int[rows];
+                for (int r = 0; r < rows; r++)
+                    _watchRows[r] = Math.Max(0, Math.Min(_height - 1, (int)(top + (0.1 + 0.75 * r / (rows - 1)) * h)));
+                _watchLast = new byte[rows * _watchColumns];
+                _watchMost = new byte[rows * _watchColumns];
+                _watchMoved = new int[_watchColumns];
+                _watchEdges = new int[_watchColumns];
+            }
+            if (_watchColumns < 4)
+                return;
+            int ri = _rgbOrder ? 0 : 2, bi = _rgbOrder ? 2 : 0;
+            var steps = new int[_watchColumns];
+            for (int r = 0; r < rows; r++)
+            {
+                int o = _watchRows[r] * _stride + _watchX * 4, k = r * _watchColumns;
+                for (int c = 0; c < _watchColumns; c++, o += 4, k++)
+                {
+                    byte luma = (byte)((_px[o + bi] * 114 + _px[o + 1] * 587 + _px[o + ri] * 299) / 1000);
+                    if (_watchSamples > 0 && Math.Abs(luma - _watchLast[k]) > MotionDelta)
+                        _watchMoved[c]++;
+                    if (c >= 2 && Math.Abs(luma - _watchLast[k - 2]) >= EdgeStep)
+                        steps[c - 1]++; // _watchLast[k - 2] is already this frame's
+                    if (luma > _watchMost[k])
+                        _watchMost[k] = luma;
+                    _watchLast[k] = luma;
+                }
+            }
+            // an edge on this column alone: busy picture content steps in
+            // brightness on every column (as in StraightEdge)
+            for (int c = 0; c < _watchColumns; c++)
+                if (steps[c] * 100 >= rows * 55
+                    && Math.Min(c >= 5 ? steps[c - 4] : rows, c + 5 < _watchColumns ? steps[c + 4] : rows) * 2 <= steps[c])
+                    _watchEdges[c]++;
+            _watchSamples++;
+        }
+
+        /// <summary>The picture's left edge, going left from the score over
+        /// what was watched: the game moves, and is lit even where it holds
+        /// still. The picture ends at the first columns that never lit up
+        /// (black beside it), or at a straight edge that stayed put over the
+        /// samples (the start of a backdrop), or, where what lies beyond
+        /// is lit and still for more than 6% of the picture's width, where
+        /// the movement ended. -1 if none of that shows.</summary>
+        private int LeftEdge()
+        {
+            const int rows = 48;
+            if (_watchColumns < 4 || _watchSamples < 2)
+                return -1;
+            int dark = 0, still = 0, moving = 0;
+            // black and stillness only count once watched for a second:
+            // part of the game is often dark or still for a moment
+            bool settled = _watchSamples >= 4;
+            int widest = (int)(0.06 * 3 * _watchColumns); // the strip is about a third of the picture wide
+            for (int c = _watchColumns - 1; c >= 0; c--)
+            {
+                bool moved = _watchMoved[c] * 100 >= 8 * rows * (_watchSamples - 1);
+                int lit = 0;
+                for (int r = 0; r < rows; r++)
+                    if (_watchMost[r * _watchColumns + c] > LumaThreshold)
+                        lit++;
+                if (moved)
+                    moving++;
+                if (!moved && lit * 4 < rows)
+                {
+                    if (++dark >= 2 && settled)
+                        return _watchX + c + dark;
+                }
+                else
+                    dark = 0;
+                if (_watchEdges[c] * 2 >= _watchSamples && c < _watchColumns - 3)
+                    return _watchX + c;
+                if (moved)
+                    still = 0;
+                else if (++still > widest && moving > 0 && settled)
+                    return _watchX + c + still;
+            }
+            return -1;
+        }
+
+        /// <summary>Notes where the picture's top edge is in this frame,
+        /// going by a find, if it can be seen: a straight edge across the
+        /// picture, within 8% of the picture's height of where the find's
+        /// own height puts it.</summary>
+        private void NoteTop(ScoreFinder.Hit hit)
+        {
             double h = DigitReader.ReferenceCropHeight * hit.Sy, w = DigitReader.ReferenceCropWidth * hit.Sx;
             int expected = (int)Math.Round(hit.Top - DigitReader.BandTop * hit.Sy), reach = (int)(0.08 * h);
             // columns sure to be inside the picture: from the score rightwards
@@ -634,56 +814,6 @@ namespace BgaSpnfdr
             if (top < 0 || left < 0 || bottom - top < 90 || right - left < 120)
                 return Rectangle.Empty;
             return new Rectangle(_area.X + left, _area.Y + top, right - left + 1, bottom - top + 1);
-        }
-
-        // ---------- a hand-drawn box ----------
-
-        /// <summary>Moves each side of a hand-drawn box onto the picture's
-        /// edge if one runs close by (within 6% of the box's size) in this
-        /// frame: a border or the start of a backdrop, along most of that
-        /// side. Sides with no such edge stay where they were drawn.</summary>
-        public static Rectangle Snap(byte[] px, int width, int height, int stride, bool rgbOrder, Rectangle box)
-        {
-            if (box.Width < 40 || box.Height < 40)
-                return box;
-            int l = box.Left, t = box.Top, r = box.Right, b = box.Bottom;
-            for (int pass = 0; pass < 2; pass++)
-            {
-                int reachY = Math.Max(3, (b - t) * 6 / 100), reachX = Math.Max(3, (r - l) * 6 / 100);
-                int inX = (r - l) / 8, inY = (b - t) / 8; // corners are often cut short
-                t = BestEdge(px, stride, width, height, rgbOrder, true, t, reachY, -1, l + inX, r - inX);
-                b = BestEdge(px, stride, width, height, rgbOrder, true, b, reachY, 1, l + inX, r - inX);
-                l = BestEdge(px, stride, width, height, rgbOrder, false, l, reachX, -1, t + inY, b - inY);
-                r = BestEdge(px, stride, width, height, rgbOrder, false, r, reachX, 1, t + inY, b - inY);
-            }
-            return r - l >= 40 && b - t >= 40 ? Rectangle.FromLTRB(l, t, r, b) : box;
-        }
-
-        private static int BestEdge(byte[] px, int stride, int width, int height, bool rgbOrder,
-            bool horizontal, int at, int reach, int outward, int from, int to)
-        {
-            int best = at;
-            double bestShare = 0.5; // an edge along at least half the side
-            for (int d = 0; d <= reach; d++)
-                for (int sign = -1; sign <= 1; sign += 2)
-                {
-                    int line = at + sign * d;
-                    double share = StraightEdge(px, stride, width, height, rgbOrder, horizontal, line, from, to);
-                    if (share > bestShare + 0.05) // nearest first: a farther one must be clearly better
-                    {
-                        bestShare = share;
-                        best = line;
-                    }
-                }
-            // busy content just inside a border can pass for the border too:
-            // of lines a few pixels apart, the outermost is the border
-            for (int d = 1; d <= 4 && best != at; d++)
-                if (StraightEdge(px, stride, width, height, rgbOrder, horizontal, best + outward * d, from, to) >= 0.9 * bestShare)
-                {
-                    best += outward * d;
-                    d = 0;
-                }
-            return best;
         }
     }
 }

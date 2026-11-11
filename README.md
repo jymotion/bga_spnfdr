@@ -14,19 +14,23 @@ Windows and Linux.
    KDE Plasma and GNOME). On Windows 10, Windows draws a yellow border
    around the window while it's being captured (Windows 11 lets the app
    turn it off).
-2. The program **auto-detects the game feed** within the window by watching
-   for a few seconds. This works on the game's menu, before there is any
-   score: check that the red box in the preview sits on the game picture.
-   If it doesn't, click **Re-try Automatic Crop**, or **Manually Crop
-   Gamefeed** and drag a box around the picture; a rough box is enough.
-   The window may hold more than the game (a whole stream layout with a
-   webcam, say), and the picture may be stretched (4:3 shown as 16:9).
-   The box is labelled *not confirmed yet* until a score first appears in
-   a run. The program then finds the score, fits the crop to it exactly
-   (correcting a box that was off, or on the wrong thing), and remembers
-   it as *confirmed by the score* for later launches. If the captured
-   window later changes size, the crop no longer fits, so the program
-   detects the game feed again (and doesn't read the score until it has).
+2. The program **finds the game picture** in the window by itself. Do this
+   on the game's **GAME SETUP menu**: the program recognises that screen
+   and puts the red box in the preview exactly on the game picture, in
+   under a second. The window may hold much more than the game (a whole
+   stream layout with a webcam, or OBS's own window), and the picture may
+   be stretched (4:3 shown as 16:9).
+   Anywhere else in the game it goes by what moves, which other moving
+   things in the window can fool; the box then corrects itself as soon as
+   the menu or a score is on screen. **Re-try Automatic Crop** starts over.
+   There is no cropping by hand: a hand-drawn box would have to be right
+   to within a few pixel rows.
+   The box is labelled *from the game's menu* or *not confirmed yet* until
+   the first score of a run (25 or more) appears. The program then checks
+   the crop against the score, corrects it if need be, and remembers it as
+   *confirmed by the score* for later launches. If the captured window
+   later changes size, the crop no longer fits, so the program finds the
+   game picture again (and doesn't read the score until it has).
 3. **Select Route CSV** — column 1 = score, column 2 = note text (quoted
    multi-line notes work, blank lines included; a one-line note may hold
    commas without quotes). When the confirmed score matches a CSV row, its
@@ -144,42 +148,49 @@ KDE honor that) and copies only the score strip out of each.
 The reader needs to know where the game picture is in what's captured: to
 within about 5 rows where the score is, 4% in height, and from 4% narrower
 to 12% wider in width (measured on the reference run; beyond that, misread
-scores get confirmed). A box drawn by hand or guessed from movement often
-isn't that good, and setup usually happens on the game's menu, where there
-is no score to check it against. So `Core/GameFinder.cs` works in two
-steps:
+scores get confirmed). Setup usually happens on the game's menu, where
+there is no score and nothing in the game moves, while a webcam beside it
+or the capturing program's own meters do. So `Core/GameFinder.cs` goes by
+three things, each specific to the game where it can be:
 
-1. **At setup, from the picture itself.** It watches a few seconds for
-   what moves, takes the largest moving region, and grows it to the
-   picture's own edge: over everything that was lit at some point, to the
-   black around the picture (stepping over the thin dark gaps a dark menu
-   has); or, where the surroundings aren't black (a stream layout's
-   backdrop), to the outermost straight edge. A still sky or a mostly
-   still menu is part of the picture though it doesn't move. Nothing is
-   assumed about the picture's shape, so a stretched one is found the
-   same way. A box drawn by hand is moved onto the picture's edges where
-   they show nearby.
-2. **Once a score is on screen, from the score** (`Core/ScoreFinder.cs`).
-   It looks for the score with the reader's own digit shapes: about once a
-   second where the crop says it should be, and otherwise through the
-   whole frame at different sizes, in small pieces (about 12 ms per
-   tenth of a second, and nothing while the picture is still). Only the
-   game has a BattleTanx score in it, so a webcam, an animation or a timer
-   can't be taken for it. A find has to repeat on later frames. The digits
-   then fix where the score band is; how far apart they are fixes the
-   width (the font's spacing is known to 0.15 px); and the picture's top
-   edge, 423 reference rows above them, fixes the height. The crop is
-   saved as confirmed, and this step doesn't run again.
+1. **The GAME SETUP menu** (`Core/MenuFinder.cs`). The menu's backdrop is
+   always the same picture, so a small copy of it (48 x 36 brightness
+   values, 864 bytes, with the part where the menu's text goes left out) is
+   looked for at every size, shape and place in the frame, the way the
+   reader looks for digits. Where it matches is where the game picture is,
+   to a pixel or two. It takes about 50 ms, and is tried as soon as a
+   window is picked and every few seconds until a score has confirmed the
+   crop.
+2. **What moves**, when the menu isn't showing: the largest moving region,
+   grown to the picture's own edge (the black around it, or the outermost
+   straight edge where the surroundings aren't black). This is only a
+   first guess: a webcam can be the largest thing that moves.
+3. **The score** (`Core/ScoreFinder.cs`), once one is on screen. It is
+   looked for with the reader's own digit shapes: about once a second
+   where the crop says it should be, and otherwise through the whole
+   frame at different sizes, in small pieces (about 12 ms per tenth of a
+   second, and nothing while the picture is still). Only the game has a
+   BattleTanx score in it. A find has to repeat on later frames. A crop
+   that already fits the score (as one from the menu does) is kept as it
+   is. Otherwise the digits fix where the score band is; how far apart
+   they are fixes the width (the font's spacing is known to 0.15 px); the
+   picture's top edge, 423 reference rows above them, fixes the height;
+   and the left edge is where, going left from the score, the picture
+   stops moving and nothing was ever lit (or a straight edge stays put).
+   The crop is then saved as confirmed, and none of this runs again.
 
 `ReaderBench -- layouts` plays the reference run inside different kinds of
-capture and checks the crop against the truth at both steps:
+capture and checks the crop against the truth:
 
 | Capture | At setup | Once the score shows |
 |---|---|---|
-| As captured, on a 1080p projector, stretched to 16:9, in a stream layout with a webcam, an animation and a timer; set up on the menu | right in all 4 | confirmed 0.4 to 1.3 s after the score has 2 digits |
-| The same, set up during play (4 points in the run each) | right in all 12 | confirmed in the same 4.3 s |
-| Boxes drawn by hand: a little off, 7% too small, half the picture, a box in the middle of it, the whole frame (10 boxes) | 3 good enough to read with | all 10 corrected: within 1.3 s of the score showing when roughly right, 4 to 6 s when the whole frame has to be searched |
+| Set up on the menu: as captured, on a 1080p projector, stretched to 16:9, in a stream layout (webcam, animation, timer), in the capturing program's own window (webcam and still image beside the game, meters moving) | all 5 recognised by the menu in 0.7 s, within a pixel or two | confirmed 0.4 to 1.0 s after the score has 2 digits; the crop stays as it was |
+| Set up during play: the same kinds, 13 cases | right in all 13, from what moves | confirmed within about a second of the 4 s of watching |
+| Starting from a wrong crop during play: a little off, 7% too small, half the picture, a box in the middle of it, the whole frame or window (11 crops) | | all 11 corrected: within a second when roughly right, about 4 s more when the whole 1080p frame has to be searched |
 | No game in the frame (webcam, animation, timer) | | never confirmed (60 s) |
+
+A tester's capture of OBS's own window on the GAME SETUP menu (the game
+beside two webcams) was recognised to within a pixel as well.
 
 If a level puts the score at the very edge of the picture and the crop's
 left edge is a little too far right, the score is read starting in the

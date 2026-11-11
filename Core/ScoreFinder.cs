@@ -37,7 +37,7 @@ namespace BgaSpnfdr
             public double X0, Y0, Sx, Sy;
             public int Cols, Rows;
             public int MinDigits;
-            public double HintX; // the picture's left edge if known roughly, else NaN
+            public Rectangle Hint; // the box this probe is for (Empty: none, the score is looked for anywhere)
 
             /// <summary>Places the reader tries: what a probe costs.</summary>
             public int Positions => Math.Max(0, Cols - DigitReader.GlyphWidth + 1) * Math.Max(0, Rows - DigitReader.BandHeight + 1);
@@ -50,7 +50,7 @@ namespace BgaSpnfdr
             public double Sx, Sy, Top, Left, Right;
             public float Gain;
             public string Text;
-            public double HintX;
+            public Rectangle Hint;
         }
 
         // Digits must match this well on average: to be worth tuning, and to
@@ -111,7 +111,7 @@ namespace BgaSpnfdr
                     double sx = sx0 * fx;
                     AddStrip(plan, box.X - slackX, box.Y + DigitReader.BandTop * sy0 - slackY, sx, sy,
                         (int)Math.Ceiling((BattleTanx.ScoreFraction.Width * box.Width + 2 * slackX) / sx),
-                        (int)Math.Ceiling(2 * slackY / sy) + 1, minDigits, box.X, chunk);
+                        (int)Math.Ceiling(2 * slackY / sy) + 1, minDigits, box, chunk);
                 }
             }
         }
@@ -142,7 +142,7 @@ namespace BgaSpnfdr
                     double left = area.X - 0.03 * w;
                     double right = area.Right - (1 - BattleTanx.ScoreFraction.Width) * w + 0.03 * w;
                     AddStrip(plan, left, top, sx, sy, (int)Math.Ceiling((right - left) / sx),
-                        (int)Math.Ceiling((bottom - top) / sy) + 1, 3, double.NaN, chunk);
+                        (int)Math.Ceiling((bottom - top) / sy) + 1, 2, Rectangle.Empty, chunk);
                 }
             }
         }
@@ -150,7 +150,7 @@ namespace BgaSpnfdr
         /// <summary>Adds probes that between them try the given number of
         /// vertical offsets from (x0, y0) down.</summary>
         private static void AddStrip(List<Probe> plan, double x0, double y0, double sx, double sy,
-            int cols, int offsets, int minDigits, double hintX, int chunk)
+            int cols, int offsets, int minDigits, Rectangle hint, int chunk)
         {
             if (cols < DigitReader.GlyphWidth || offsets < 1)
                 return;
@@ -163,7 +163,7 @@ namespace BgaSpnfdr
                     Cols = cols,
                     Rows = Math.Min(perProbe, offsets - o) + DigitReader.BandHeight - 1,
                     MinDigits = minDigits,
-                    HintX = hintX,
+                    Hint = hint,
                 });
         }
 
@@ -182,7 +182,7 @@ namespace BgaSpnfdr
                 Right = p.X0 + (_reader.FoundLast + DigitReader.GlyphWidth) * p.Sx,
                 Gain = _reader.FoundGain,
                 Text = text,
-                HintX = p.HintX,
+                Hint = p.Hint,
             };
             return Plausible(text, _reader.FoundGain, p.MinDigits, RoughMatch);
         }
@@ -316,58 +316,30 @@ namespace BgaSpnfdr
 
         // ---------- from the score to the picture ----------
 
-        /// <summary>The game picture a tuned find belongs to. Its top,
-        /// height and width follow from the digits. Its left edge is the
-        /// picture's own edge in this frame if one can be seen (edgeSeen);
-        /// otherwise the hint's, or with no hint where the score sits in
-        /// most levels; always kept to where the score can be inside the
-        /// picture.</summary>
-        public Rectangle Crop(Hit hit, out bool edgeSeen)
+        /// <summary>The frame columns the picture's left edge can be at,
+        /// going by a find: the score starts at least 2 px into the picture
+        /// and ends within its left third.</summary>
+        public static void LeftRange(Hit hit, out double min, out double max)
         {
-            double w = W * hit.Sx, h = H * hit.Sy;
-            double y = hit.Top - DigitReader.BandTop * hit.Sy;
-            // the score starts at least 2 px into the picture and ends within
-            // its left third
-            double max = hit.Left - 2 * hit.Sx, min = hit.Right - 0.34 * w;
-            bool hinted = !double.IsNaN(hit.HintX);
-            int edge = hinted
-                ? LeftEdge(Math.Max(min, hit.HintX - 0.1 * w), Math.Min(max, hit.HintX + 0.1 * w), y, h)
-                : LeftEdge(min, max, y, h);
-            edgeSeen = edge >= 0;
-            double x = edgeSeen ? edge : hinted ? hit.HintX : hit.Right - 0.23 * w;
-            x = Math.Max(min, Math.Min(max, x));
-            return new Rectangle((int)Math.Round(x), (int)Math.Round(y), (int)Math.Round(w), (int)Math.Round(h));
+            max = hit.Left - 2 * hit.Sx;
+            min = hit.Right - 0.34 * W * hit.Sx;
         }
 
-        /// <summary>The column between from and to where the picture starts:
-        /// the one with a brightness step across it down most of the
-        /// picture's height (a border, a backdrop). -1 if there is none.</summary>
-        private int LeftEdge(double from, double to, double top, double height)
+        /// <summary>The game picture a tuned find belongs to. Its top,
+        /// height and width follow from the digits; its left edge is given
+        /// (NaN: where the score sits in most levels), kept to where the
+        /// score can be inside the picture.</summary>
+        public static Rectangle Crop(Hit hit, double left)
         {
-            int x0 = Math.Max(1, (int)Math.Floor(from)), x1 = Math.Min(_width - 2, (int)Math.Ceiling(to));
-            int y0 = Math.Max(0, (int)(top + 0.1 * height)), y1 = Math.Min(_height - 1, (int)(top + 0.85 * height));
-            int step = Math.Max(1, (y1 - y0) / 100);
-            int ri = _rgbOrder ? 0 : 2, bi = _rgbOrder ? 2 : 0;
-            int best = -1, bestCount = 0, rows = 0;
-            for (int y = y0; y <= y1; y += step)
-                rows++;
-            for (int x = x0; x <= x1; x++)
-            {
-                int count = 0;
-                for (int y = y0; y <= y1; y += step)
-                {
-                    int a = ScoreBand.Luma(_px, _stride, 0, _height - 1, _width, x - 1, y, ri, bi);
-                    int b = ScoreBand.Luma(_px, _stride, 0, _height - 1, _width, x + 1, y, ri, bi);
-                    if (Math.Abs(a - b) >= 20)
-                        count++;
-                }
-                if (count > bestCount)
-                {
-                    bestCount = count;
-                    best = x;
-                }
-            }
-            return rows > 0 && bestCount * 100 >= rows * 55 ? best : -1;
+            double w = W * hit.Sx, h = H * hit.Sy;
+            LeftRange(hit, out double min, out double max);
+            double x = double.IsNaN(left) ? hit.Right - 0.23 * w : left;
+            x = Math.Max(min, Math.Min(max, x));
+            return new Rectangle((int)Math.Round(x), (int)Math.Round(hit.Top - DigitReader.BandTop * hit.Sy),
+                (int)Math.Round(w), (int)Math.Round(h));
         }
+
+        /// <summary>The mean match of a find's digits (0.6 to 1).</summary>
+        public static double Match(Hit hit) => DigitReader.MatchThreshold + hit.Gain / Math.Max(1, hit.Text.Length);
     }
 }
