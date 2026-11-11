@@ -34,8 +34,10 @@ namespace BgaSpnfdr.Bench
 
         // The capturing program's own window, as a tester had it: grey
         // panels, and in its black preview a still image and a moving webcam
-        // 20 px left of the game (stretched to 16:9), with moving meters below
-        private const string Window = "color=c=0x1e1e1e:s=1920x1080:r=10,drawbox=x=300:y=100:w=1300:h=700:color=black:t=fill," +
+        // 20 px left of the game (stretched to 16:9), with moving meters
+        // below. The preview's top edge is 4% of the picture's height above
+        // the picture: not to be taken for the picture's own.
+        private const string Window = "color=c=0x1e1e1e:s=1920x1080:r=10,drawbox=x=300:y=88:w=1300:h=712:color=black:t=fill," +
                                       "drawbox=x=310:y=110:w=250:h=190:color=white:t=fill[bg];";
         private const string InWindow = "[bg][g]overlay=580:110[x1];mandelbrot=s=250x190:r=10[cam];[x1][cam]overlay=310:320[x2];" +
                                         "testsrc2=s=300x60:r=10[m];[x2][m]overlay=320:900";
@@ -146,8 +148,14 @@ namespace BgaSpnfdr.Bench
                     found = true;
                     if (!finder.Refining)
                     {
-                        after += ": " + Compare(crop, truth);
-                        break;
+                        // as the apps do: a height that couldn't be measured
+                        // (the picture's top edge not showing) is tried again
+                        if (finder.Ruled || k > maxFrames - 80)
+                        {
+                            after += (finder.Ruled ? "" : " (height not measured)") + ": " + Compare(crop, truth);
+                            break;
+                        }
+                        finder = GameFinder.Check(crop, true);
                     }
                 }
                 else

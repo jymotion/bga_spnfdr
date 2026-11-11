@@ -526,7 +526,8 @@ namespace BgaSpnfdr
                 if (_debug)
                 {
                     Rectangle c = _settings.Crop;
-                    text = $"{_tracker.Status}  ·  crop {c.X},{c.Y} {c.Width}x{c.Height} "
+                    long since = _sinceScore.ElapsedMilliseconds / 1000;
+                    text = _tracker.Status + (since >= 1 ? $" ({since} s)" : "") + $"  ·  crop {c.X},{c.Y} {c.Width}x{c.Height} "
                         + (_lost ? "(no score for 15 s: checking where the game is)" : _settings.CropVerified ? "(confirmed by the score)"
                             : _cropFromMenu ? "(from the menu)" : "(not confirmed)")
                         + $"  ·  window {_source.Size.Width}x{_source.Size.Height}, "

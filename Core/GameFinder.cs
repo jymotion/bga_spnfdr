@@ -571,8 +571,15 @@ namespace BgaSpnfdr
             for (int d = 0; d <= reach; d++)
                 for (int sign = -1; sign <= 1; sign += 2)
                 {
-                    double share = StraightEdge(_px, _stride, _width, _height, _rgbOrder, true, expected + sign * d, from, to);
-                    if (share > bestShare + 0.05)
+                    int line = expected + sign * d;
+                    double share = StraightEdge(_px, _stride, _width, _height, _rgbOrder, true, line, from, to);
+                    // the picture is what lies below its top edge: an edge
+                    // with black below it is something else (where the
+                    // capturing program's grey panel meets its black canvas,
+                    // a little above the picture)
+                    // (within 1% of its height: a capture often has a thin
+                    // black border of its own between a backdrop and the picture)
+                    if (share > bestShare + 0.05 && LitBelow(line, Math.Max(3, (int)(0.01 * h)), from, to))
                     {
                         bestShare = share;
                         best = expected + sign * d;
@@ -580,6 +587,30 @@ namespace BgaSpnfdr
                 }
             if (best >= 0)
                 _findTops.Add(best);
+        }
+
+        /// <summary>Whether one of the rows just below a line is lit along
+        /// most of from..to.</summary>
+        private bool LitBelow(int line, int within, int from, int to)
+        {
+            for (int d = 2; d <= within + 2; d++)
+                if (LitShare(line + d, from, to) >= 0.5)
+                    return true;
+            return false;
+        }
+
+        /// <summary>The share of row y between columns from..to that is lit
+        /// in this frame.</summary>
+        private double LitShare(int y, int from, int to)
+        {
+            if (y < 0 || y >= _height || to <= from)
+                return 0;
+            int ri = _rgbOrder ? 0 : 2, bi = _rgbOrder ? 2 : 0;
+            int step = Math.Max(1, (to - from) / 160), lit = 0, total = 0;
+            for (int x = from; x < to; x += step, total++)
+                if (ScoreBand.Luma(_px, _stride, 0, _height - 1, _width, x, y, ri, bi) > LumaThreshold)
+                    lit++;
+            return total == 0 ? 0 : (double)lit / total;
         }
 
         // ---------- what moves ----------

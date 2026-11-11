@@ -286,7 +286,8 @@ namespace BgaSpnfdr.UI
                 if (_debug)
                 {
                     Rectangle c = _settings.Crop;
-                    text = $"{_processor.Status}  ·  crop {c.X},{c.Y} {c.Width}x{c.Height} "
+                    long since = (Environment.TickCount64 - _processor.LastScoreSeen) / 1000;
+                    text = _processor.Status + (since >= 1 ? $" ({since} s)" : "") + $"  ·  crop {c.X},{c.Y} {c.Width}x{c.Height} "
                         + (_lost ? "(no score for 15 s: checking where the game is)" : _settings.CropVerified ? "(confirmed by the score)"
                             : _cropFromMenu ? "(from the menu)" : "(not confirmed)")
                         + $"  ·  frame {fw}x{fh}"

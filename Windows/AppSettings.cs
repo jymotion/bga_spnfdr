@@ -76,7 +76,7 @@ namespace BgaSpnfdr
                         if (bool.TryParse(value, out bool verified))
                             s.CropVerified = verified;
                         break;
-                    case "CropRuled":
+                    case "CropHeightMeasured": // (not "CropRuled": one build wrote that for heights measured to the wrong edge)
                         if (bool.TryParse(value, out bool ruled))
                             s.CropRuled = ruled;
                         break;
@@ -132,7 +132,7 @@ namespace BgaSpnfdr
                     $"Crop={Crop.X},{Crop.Y},{Crop.Width},{Crop.Height}",
                     $"CropWindowSize={CropWindowSize.Width},{CropWindowSize.Height}",
                     "CropVerified=" + CropVerified,
-                    "CropRuled=" + CropRuled,
+                    "CropHeightMeasured=" + CropRuled,
                     "Csv=" + CsvPath,
                     "NotesFont=" + NotesFontSize.ToString(CultureInfo.InvariantCulture),
                     "NotesFontFamily=" + NotesFontFamily,

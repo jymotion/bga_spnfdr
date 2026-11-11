@@ -56,7 +56,7 @@ namespace BgaSpnfdr
                         s.CropFrameSize = new Size(r.X, r.Y);
                         break;
                     case "CropVerified": if (bool.TryParse(value, out bool verified)) s.CropVerified = verified; break;
-                    case "CropRuled": if (bool.TryParse(value, out bool ruled)) s.CropRuled = ruled; break;
+                    case "CropHeightMeasured": // (not "CropRuled": one build wrote that for heights measured to the wrong edge) if (bool.TryParse(value, out bool ruled)) s.CropRuled = ruled; break;
                     case "Csv": s.CsvPath = value; break;
                     case "NotesFont": if (value.Length > 0) s.NotesFont = value; break;
                     case "NotesTextColor": if (IsColor(value)) s.NotesTextColor = value; break;
@@ -83,7 +83,7 @@ namespace BgaSpnfdr
                     $"Crop={Crop.X},{Crop.Y},{Crop.Width},{Crop.Height}",
                     $"CropFrameSize={CropFrameSize.Width},{CropFrameSize.Height}",
                     "CropVerified=" + CropVerified,
-                    "CropRuled=" + CropRuled,
+                    "CropHeightMeasured=" + CropRuled,
                     "Csv=" + CsvPath,
                     "NotesFont=" + NotesFont,
                     "NotesTextColor=" + NotesTextColor,
