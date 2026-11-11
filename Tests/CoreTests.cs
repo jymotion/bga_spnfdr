@@ -308,6 +308,21 @@ namespace BgaSpnfdr.Tests
         }
 
         [Fact]
+        public void CheckCorrectsATrustedCropThatIsTooTallOnceTheTopEdgeShows()
+        {
+            // 2.9% too tall with the score band in the right place, as a
+            // crop confirmed in a dark scene can be: a tester's stayed that
+            // way, a black bar above the game, while 3% was allowed
+            var picture = new System.Drawing.Rectangle(90, 60, 617, 474);
+            var tall = new System.Drawing.Rectangle(90, 48, 617, 488);
+            GameFinder f = Run(GameFinder.Check(tall, true), 0, "239800", picture, 300, 800, 600);
+            Assert.True(f.Verified);
+            Assert.True(f.Ruled);
+            Assert.InRange(f.Result.Height, 470, 478);
+            Assert.InRange(f.Result.Top, 57, 63);
+        }
+
+        [Fact]
         public void CheckFindsNothingWithoutAScore()
         {
             GameFinder f = Run(GameFinder.Check(Picture, true), 0, "", Picture, 60);

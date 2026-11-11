@@ -431,7 +431,8 @@ namespace BgaSpnfdr
             bool ruled = height != bySize[bySize.Count / 2].Sy;
             int left = LeftEdge();
             Rectangle crop = ScoreFinder.Crop(middle, left >= 0 ? left : hint.IsEmpty ? double.NaN : hint.X);
-            Result = !hint.IsEmpty && Fits(hint, crop, middle, _trusted && !ruled ? 0.08 : 0.03) ? hint : crop;
+            // (a measured height wins over a box that is more than 1% off it)
+            Result = !hint.IsEmpty && Fits(hint, crop, middle, ruled ? 0.01 : _trusted ? 0.08 : 0.03) ? hint : crop;
             Verified = true;
             Ruled = ruled;
             Recognized = false;

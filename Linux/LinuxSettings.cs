@@ -17,7 +17,6 @@ namespace BgaSpnfdr
         public Rectangle Crop = Rectangle.Empty;    // game picture, in captured-frame pixels
         public Size CropFrameSize = Size.Empty;     // frame size the crop was made for
         public bool CropVerified;                   // the score has been found in it (Core/GameFinder)
-        public bool CropRuled;                      // ... and its height measured from the picture's top edge
         public string CsvPath = string.Empty;
         public string NotesFont = "Sans Bold 48";
         public string NotesTextColor = "#ffffff";
@@ -56,7 +55,6 @@ namespace BgaSpnfdr
                         s.CropFrameSize = new Size(r.X, r.Y);
                         break;
                     case "CropVerified": if (bool.TryParse(value, out bool verified)) s.CropVerified = verified; break;
-                    case "CropHeightMeasured": // (not "CropRuled": one build wrote that for heights measured to the wrong edge) if (bool.TryParse(value, out bool ruled)) s.CropRuled = ruled; break;
                     case "Csv": s.CsvPath = value; break;
                     case "NotesFont": if (value.Length > 0) s.NotesFont = value; break;
                     case "NotesTextColor": if (IsColor(value)) s.NotesTextColor = value; break;
@@ -83,7 +81,6 @@ namespace BgaSpnfdr
                     $"Crop={Crop.X},{Crop.Y},{Crop.Width},{Crop.Height}",
                     $"CropFrameSize={CropFrameSize.Width},{CropFrameSize.Height}",
                     "CropVerified=" + CropVerified,
-                    "CropHeightMeasured=" + CropRuled,
                     "Csv=" + CsvPath,
                     "NotesFont=" + NotesFont,
                     "NotesTextColor=" + NotesTextColor,

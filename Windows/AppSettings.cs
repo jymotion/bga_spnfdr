@@ -16,7 +16,6 @@ namespace BgaSpnfdr
         public Rectangle Crop = Rectangle.Empty;
         public Size CropWindowSize = Size.Empty; // capture-window size the crop was made for
         public bool CropVerified;                // the score has been found in it (Core/GameFinder)
-        public bool CropRuled;                   // ... and its height measured from the picture's top edge
         public string CsvPath = string.Empty;
         public float NotesFontSize = 48f;
         public string NotesFontFamily = "Segoe UI";
@@ -76,10 +75,6 @@ namespace BgaSpnfdr
                         if (bool.TryParse(value, out bool verified))
                             s.CropVerified = verified;
                         break;
-                    case "CropHeightMeasured": // (not "CropRuled": one build wrote that for heights measured to the wrong edge)
-                        if (bool.TryParse(value, out bool ruled))
-                            s.CropRuled = ruled;
-                        break;
                     case "Csv":
                         s.CsvPath = value;
                         break;
@@ -132,7 +127,6 @@ namespace BgaSpnfdr
                     $"Crop={Crop.X},{Crop.Y},{Crop.Width},{Crop.Height}",
                     $"CropWindowSize={CropWindowSize.Width},{CropWindowSize.Height}",
                     "CropVerified=" + CropVerified,
-                    "CropHeightMeasured=" + CropRuled,
                     "Csv=" + CsvPath,
                     "NotesFont=" + NotesFontSize.ToString(CultureInfo.InvariantCulture),
                     "NotesFontFamily=" + NotesFontFamily,

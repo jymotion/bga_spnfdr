@@ -46,6 +46,10 @@ namespace BgaSpnfdr
 
         private bool _cropFromMenu; // the crop is where the game's menu was recognised
         private bool _lost;         // a confirmed crop, but no score read through it for a while
+        // The crop's height has been measured from the picture's top edge
+        // since the program started. Not saved: checked once per run of the
+        // program, so a wrong one can't stick.
+        private bool _heightMeasured;
         private DateTime _measureNext; // when to try again to measure the picture's height
 
         // Core/GameFinder at work: _detector while auto-crop runs (the user
@@ -278,7 +282,7 @@ namespace BgaSpnfdr
             if (finder.Recognized)
             {
                 // the game's menu is showing: that is where the picture is
-                _settings.CropRuled = true; // the whole picture was matched
+                _heightMeasured = true; // the whole picture was matched
                 SetCrop(finder.Result, false, fromMenu: true);
                 ShowStickyStatus("Game menu recognised — the crop is set to it. The first score will confirm it.",
                     seconds: 10);
@@ -290,7 +294,7 @@ namespace BgaSpnfdr
             {
                 // no menu and perhaps no score to go by: the box is from
                 // what moves and the picture's edges
-                _settings.CropRuled = finder.Verified && finder.Ruled;
+                _heightMeasured = finder.Verified && finder.Ruled;
                 SetCrop(finder.Result, finder.Verified);
                 if (first)
                     ShowStickyStatus(finder.Verified
@@ -302,10 +306,10 @@ namespace BgaSpnfdr
             else if (finder.Verified)
             {
                 bool confirmed = _settings.CropVerified, moved = finder.Result != _settings.Crop;
-                bool ruled = finder.Ruled || (!moved && _settings.CropRuled);
-                if (moved || !confirmed || ruled != _settings.CropRuled)
+                bool ruled = finder.Ruled || (!moved && _heightMeasured);
+                if (moved || !confirmed || ruled != _heightMeasured)
                 {
-                    _settings.CropRuled = ruled;
+                    _heightMeasured = ruled;
                     SetCrop(finder.Result, true, _cropFromMenu && !moved);
                 }
                 _sinceScore.Restart();
@@ -486,7 +490,7 @@ namespace BgaSpnfdr
             bool lost = _lost = !unconfirmed && _sinceScore.ElapsedMilliseconds > LostAfter;
             // ... or its height hasn't been measured yet (the picture's top
             // edge doesn't show in a dark scene): tried again every 10 s
-            bool measure = !unconfirmed && !_settings.CropRuled && DateTime.Now >= _measureNext;
+            bool measure = !unconfirmed && !_heightMeasured && DateTime.Now >= _measureNext;
             lost |= measure;
             if (_detector == null && !_cropStale)
             {
@@ -528,7 +532,7 @@ namespace BgaSpnfdr
                     Rectangle c = _settings.Crop;
                     long since = _sinceScore.ElapsedMilliseconds / 1000;
                     text = _tracker.Status + (since >= 1 ? $" ({since} s)" : "") + $"  ·  crop {c.X},{c.Y} {c.Width}x{c.Height} "
-                        + (_lost ? "(no score for 15 s: checking where the game is)" : _settings.CropVerified ? "(confirmed by the score)"
+                        + (_lost ? "(no score for 15 s: checking where the game is)" : _settings.CropVerified ? (_tracker.Score >= 0 ? "(confirmed by the score)" : "(confirmed last time; no score seen yet this time)")
                             : _cropFromMenu ? "(from the menu)" : "(not confirmed)")
                         + $"  ·  window {_source.Size.Width}x{_source.Size.Height}, "
                         + (_source.UsedGraphicsCapture ? "Windows.Graphics.Capture" : "PrintWindow")
@@ -677,7 +681,7 @@ namespace BgaSpnfdr
                     e.Graphics.DrawRectangle(pen, r);
                 TextRenderer.DrawText(e.Graphics,
                     _lost ? "game feed (no score for a while: checking it is still here)"
-                        : _settings.CropVerified ? "game feed (confirmed by the score)"
+                        : _settings.CropVerified ? (_tracker.Score >= 0 ? "game feed (confirmed by the score)" : "game feed (as confirmed last time; no score seen yet)")
                         : _cropFromMenu ? "game feed (from the game's menu)" : "game feed (not confirmed yet)",
                     Font, new Point(r.X + 4, r.Y + 3), Color.Red);
 
