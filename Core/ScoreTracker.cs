@@ -52,6 +52,9 @@ namespace BgaSpnfdr
         private int _pendingCount;
         private long _confirmedScore = -1;
 
+        /// <summary>The score that stands; -1 before the first.</summary>
+        public long Score => _confirmedScore;
+
         /// <summary>Human-readable reading activity for the status bar. The
         /// host app may overwrite it.</summary>
         public string Status = "Waiting for the score";

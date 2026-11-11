@@ -51,6 +51,13 @@ namespace BgaSpnfdr
         public volatile int FrameWidth, FrameHeight;
         public string Status => _tracker.Status;
 
+        /// <summary>The score that stands; -1 before the first.</summary>
+        public long Score => _tracker.Score;
+
+        /// <summary>When (Environment.TickCount64) the score was last read
+        /// where the crop says it is. The UI sets it when capture starts.</summary>
+        public long LastScoreSeen;
+
         /// <summary>UI thread: whether the status text is being shown.</summary>
         public bool WantStatus { set => _tracker.WantStatus = value; }
 
@@ -100,6 +107,7 @@ namespace BgaSpnfdr
                         NoteReady?.Invoke(note);
                     if (_tracker.ReadStands)
                     {
+                        LastScoreSeen = Environment.TickCount64;
                         Rectangle moved = ScoreBand.Recenter(cfg.Crop, _reader.FoundFirst);
                         if (moved != cfg.Crop && moved != _lastMoved)
                         {

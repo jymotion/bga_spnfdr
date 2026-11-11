@@ -276,7 +276,7 @@ namespace BgaSpnfdr.Tests
         public void CheckFitsASloppyCropToTheScore()
         {
             var sloppy = new System.Drawing.Rectangle(Picture.X + 20, Picture.Y - 25, Picture.Width - 30, Picture.Height + 40);
-            GameFinder f = Run(GameFinder.Check(sloppy), 0, "239800", Picture, 200);
+            GameFinder f = Run(GameFinder.Check(sloppy, false), 0, "239800", Picture, 200);
             Assert.True(f.Verified);
             AssertNear(Picture, f.Result, 10); // 2% of its height: reading takes 4%
         }
@@ -285,7 +285,24 @@ namespace BgaSpnfdr.Tests
         public void CheckFindsTheScoreAnywhereWhenTheCropIsPlainWrong()
         {
             var wrong = new System.Drawing.Rectangle(300, 100, 200, 150);
-            GameFinder f = Run(GameFinder.Check(wrong), 0, "239800", Picture, 1500);
+            GameFinder f = Run(GameFinder.Check(wrong, false), 0, "239800", Picture, 1500);
+            Assert.True(f.Verified);
+            AssertNear(Picture, f.Result, 10);
+        }
+
+        [Fact]
+        public void CheckKeepsATrustedCropThatFitsAndLeavesOneThatDoesnt()
+        {
+            // a few pixels out, as a crop from the menu or an earlier score
+            // may be: kept exactly as it is
+            var close = new System.Drawing.Rectangle(Picture.X + 3, Picture.Y + 1, Picture.Width - 4, Picture.Height + 2);
+            GameFinder f = Run(GameFinder.Check(close, true), 0, "239800", Picture, 200);
+            Assert.True(f.Verified);
+            Assert.Equal(close, f.Result);
+
+            // the game has been moved in the window: trusted or not, it goes
+            var elsewhere = new System.Drawing.Rectangle(300, 100, 200, 150);
+            f = Run(GameFinder.Check(elsewhere, true), 0, "239800", Picture, 1500);
             Assert.True(f.Verified);
             AssertNear(Picture, f.Result, 10);
         }
@@ -293,7 +310,7 @@ namespace BgaSpnfdr.Tests
         [Fact]
         public void CheckFindsNothingWithoutAScore()
         {
-            GameFinder f = Run(GameFinder.Check(Picture), 0, "", Picture, 60);
+            GameFinder f = Run(GameFinder.Check(Picture, true), 0, "", Picture, 60);
             Assert.False(f.Verified);
         }
 

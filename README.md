@@ -16,21 +16,20 @@ Windows and Linux.
    turn it off).
 2. The program **finds the game picture** in the window by itself. Do this
    on the game's **GAME SETUP menu**: the program recognises that screen
-   and puts the red box in the preview exactly on the game picture, in
-   under a second. The window may hold much more than the game (a whole
-   stream layout with a webcam, or OBS's own window), and the picture may
-   be stretched (4:3 shown as 16:9).
+   and knows exactly where the game picture is, in under a second; the
+   status line then says *Game found by its menu*. The window may hold
+   much more than the game (a whole stream layout with a webcam, or OBS's
+   own window), and the picture may be stretched (4:3 shown as 16:9).
    Anywhere else in the game it goes by what moves, which other moving
-   things in the window can fool; the box then corrects itself as soon as
-   the menu or a score is on screen. **Re-try Automatic Crop** starts over.
-   There is no cropping by hand: a hand-drawn box would have to be right
-   to within a few pixel rows.
-   The box is labelled *from the game's menu* or *not confirmed yet* until
-   the first score of a run (25 or more) appears. The program then checks
-   the crop against the score, corrects it if need be, and remembers it as
-   *confirmed by the score* for later launches. If the captured window
-   later changes size, the crop no longer fits, so the program finds the
-   game picture again (and doesn't read the score until it has).
+   things in the window can fool; it then corrects itself as soon as the
+   menu or a score is on screen. There is nothing to crop by hand and
+   nothing to retry.
+   When the first score of a run (25 or more) appears, the program checks
+   where it has the game against the score, corrects it if need be, and
+   remembers it (*Ready*). If you later move the game inside the window,
+   or the window changes size, it finds it again by itself: after 15 s
+   without a score it looks for the menu and the score in the whole
+   window again.
 3. **Select Route CSV** — column 1 = score, column 2 = note text (quoted
    multi-line notes work, blank lines included; a one-line note may hold
    commas without quotes). When the confirmed score matches a CSV row, its
@@ -41,6 +40,12 @@ Windows and Linux.
    preview live on the actual notes window; Save keeps them, Cancel reverts.
    The window is automatically sized to fit the largest note in the CSV.
 
+**Show Debug Info** adds a preview of the captured window to the setup
+window, with a red box on the game picture and a green one where the
+score is read, and puts what the reader is doing in the status line
+(current read, rejected misreads, where the crop is from). Nothing is
+captured or worked out for it while it is hidden.
+
 During a run the player only needs the notes window: once configured,
 **close the setup window** — capture and reading keep running. Right-click (or
 double-click) the notes window for "Capture setup…" and "Exit". The notes
@@ -49,9 +54,9 @@ window is always visible — it IS the program — and closing it exits the app.
 Everything — capture window, crop, CSV path, formatting, notes-window
 position, setup-window size — persists across launches in
 `%APPDATA%\bga_spnfdr\settings.txt` (Windows) or
-`~/.config/bga_spnfdr/settings.txt` (Linux). The status bar at the bottom of
-the setup window shows live reading activity (current score, rejected
-misreads, holding through menus).
+`~/.config/bga_spnfdr/settings.txt` (Linux). The status line at the bottom of
+the setup window says where things stand (looking for the game, found by
+its menu, ready, the current score).
 
 ## Building
 
@@ -177,7 +182,13 @@ three things, each specific to the game where it can be:
    picture's top edge, 423 reference rows above them, fixes the height;
    and the left edge is where, going left from the score, the picture
    stops moving and nothing was ever lit (or a straight edge stays put).
-   The crop is then saved as confirmed, and none of this runs again.
+   The crop is then saved as confirmed, and none of this runs while the
+   score is being read. After 15 s without one (a menu, a cutscene, or the
+   game moved inside the window) it starts again, and stops when the
+   score is back. A confirmed crop, or one from the menu, is kept unless
+   the score is found clearly somewhere else: run all the time over the
+   reference run in three kinds of capture, it confirmed the right crop
+   in place over 400 times each and never moved it.
 
 `ReaderBench -- layouts` plays the reference run inside different kinds of
 capture and checks the crop against the truth:

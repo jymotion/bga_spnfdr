@@ -118,7 +118,7 @@ namespace BgaSpnfdr.Bench
                     crop = new Rectangle(b[0], b[1], b[2], b[3]);
                     setup = "to start with: " + Compare(crop, truth);
                     detecting = false;
-                    finder = GameFinder.Check(crop);
+                    finder = GameFinder.Check(crop, false);
                 }
                 clock.Restart();
                 bool done = finder.Feed(px, w, h, w * 4, false, area);
@@ -151,7 +151,7 @@ namespace BgaSpnfdr.Bench
                     }
                 }
                 else
-                    finder = GameFinder.Check(crop);
+                    finder = GameFinder.Check(crop, finder.Recognized); // a crop from the menu is trusted
             }
             try { ffmpeg.Kill(); } catch (Exception) { }
             Console.WriteLine($"{name,-34} {setup}");

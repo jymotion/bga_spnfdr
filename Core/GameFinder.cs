@@ -62,6 +62,7 @@ namespace BgaSpnfdr
         private readonly bool _detect;
         private readonly int _frameBudget;
         private readonly Rectangle _crop;      // Check: the crop to check
+        private readonly bool _trusted;        // Check: that crop is from the menu or an earlier score
         private Stage _stage;
         private int _framesLeft;
         private int[] _rowMax, _colMax;
@@ -93,8 +94,9 @@ namespace BgaSpnfdr
         private bool _reported;  // Result has been handed out once already
         private int _frame;      // frames fed while checking
 
-        private GameFinder(bool detect, int frames, Rectangle crop)
+        private GameFinder(bool detect, int frames, Rectangle crop, bool trusted)
         {
+            _trusted = trusted;
             _detect = detect;
             _frameBudget = frames;
             _crop = crop;
@@ -102,10 +104,13 @@ namespace BgaSpnfdr
         }
 
         /// <summary>Finds the picture by what moves over this many frames.</summary>
-        public static GameFinder Detect(int frames) => new GameFinder(true, frames, Rectangle.Empty);
+        public static GameFinder Detect(int frames) => new GameFinder(true, frames, Rectangle.Empty, false);
 
-        /// <summary>Looks for the score: near this crop first, then anywhere.</summary>
-        public static GameFinder Check(Rectangle crop) => new GameFinder(false, 0, crop);
+        /// <summary>Looks for the score: near this crop first, then anywhere.
+        /// trusted: the crop is from the game's menu or was confirmed by a
+        /// score before, as opposed to a guess from what moves. It is then
+        /// kept unless the score clearly says otherwise.</summary>
+        public static GameFinder Check(Rectangle crop, bool trusted) => new GameFinder(false, 0, crop, trusted);
 
         /// <summary>Frames Detect still wants to watch (for a countdown).</summary>
         public int FramesLeft => _framesLeft;
@@ -413,10 +418,14 @@ namespace BgaSpnfdr
             // says is kept as it is: it reads just as well, and it was put
             // there with more to go by (the menu, the picture's edges) than
             // the score alone gives, above all for the left edge.
-            Rectangle hint = first.Hint;
+            // The height from the digits alone (no top edge seen) can be 5%
+            // off, so a trusted box is given that much room, and is kept
+            // wherever in the frame the score was found.
+            Rectangle hint = first.Hint.IsEmpty && _trusted ? _crop : first.Hint;
+            bool ruled = height != bySize[bySize.Count / 2].Sy;
             int left = LeftEdge();
             Rectangle crop = ScoreFinder.Crop(middle, left >= 0 ? left : hint.IsEmpty ? double.NaN : hint.X);
-            Result = !hint.IsEmpty && Fits(hint, crop, middle) ? hint : crop;
+            Result = !hint.IsEmpty && Fits(hint, crop, middle, _trusted && !ruled ? 0.08 : 0.03) ? hint : crop;
             Verified = true;
             Recognized = false;
             Refining = !last;
@@ -434,14 +443,14 @@ namespace BgaSpnfdr
 
         /// <summary>Whether a box reads as well as the crop worked out from
         /// the score: its score band within 3 reference rows, its height
-        /// within 3%, its width between 3% narrower and 6% wider, and the
-        /// score inside it.</summary>
-        private static bool Fits(Rectangle box, Rectangle crop, ScoreFinder.Hit hit)
+        /// within the share given, its width between 3% narrower and 6%
+        /// wider, and the score inside it.</summary>
+        private static bool Fits(Rectangle box, Rectangle crop, ScoreFinder.Hit hit, double height)
         {
             double rows = DigitReader.ReferenceCropHeight, band = DigitReader.BandTop / rows;
             ScoreFinder.LeftRange(hit, out double min, out double max);
             return Math.Abs(box.Y + band * box.Height - (crop.Y + band * crop.Height)) <= 3 * crop.Height / rows
-                && Math.Abs((double)box.Height / crop.Height - 1) <= 0.03
+                && Math.Abs((double)box.Height / crop.Height - 1) <= height
                 && box.Width >= 0.97 * crop.Width && box.Width <= 1.06 * crop.Width
                 && box.X >= min - 1 && box.X <= max + 1;
         }

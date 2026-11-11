@@ -18,7 +18,10 @@ namespace BgaSpnfdr.UI
     internal sealed unsafe class App
     {
         private const int AutoCropFramesInitial = 40; // ~4 s of 10/s snapshots
-        private const int AutoCropFramesRetry = 20;   // ~2 s for "Re-try Automatic Crop"
+        // A confirmed crop is looked into again when no score has been read
+        // through it for this long (ms): the game may have been moved inside
+        // the window, which doesn't change the window's size
+        private const int LostAfter = 15000;
 
         private readonly LinuxSettings _settings = LinuxSettings.Load();
         private readonly FrameProcessor _processor = new FrameProcessor();
@@ -27,16 +30,19 @@ namespace BgaSpnfdr.UI
         private PipeWireStream _stream;
         private Dictionary<long, string> _route = new Dictionary<long, string>();
 
-        private IntPtr _setup, _preview, _status, _pickButton, _csvButton;
+        private IntPtr _setup, _preview, _status, _pickButton, _csvButton, _debugButton;
+        private bool _debug;     // "Show Debug Info" is on: preview and reading details
+        private Size _debugSize; // the setup window's size with them showing
         private bool _capturing;
         private bool _autoCropOnStart;
         private string _captureStatus;
         private string _sticky;
         private long _stickyUntil; // Environment.TickCount64
 
-        // Core/GameFinder at work: _detector while auto-crop runs (the user
-        // waits for it), _checker in the background while the crop hasn't
-        // been confirmed by a score (set up on the menu, there is none yet)
+        // Core/GameFinder at work: _detector when a window has just been
+        // picked or has changed size, _checker in the background while the
+        // crop hasn't been confirmed by a score (set up on the menu, there
+        // is none yet) or no score has been read through it for a while
         private GameFinder _detector, _checker;
         private bool _reported; // the finder at work has given a result already
         private Size _sizeChecked;          // frame size the crop was last checked against
@@ -104,14 +110,12 @@ namespace BgaSpnfdr.UI
         {
             _setup = gtk_window_new(0);
             gtk_window_set_title(_setup, "bga_spnfdr - setup");
-            gtk_window_set_default_size(_setup, 1000, 600);
-            if (_settings.SetupBounds.Width >= 200 && _settings.SetupBounds.Height >= 150)
-            {
+            // it opens small: buttons and a status line. "Show Debug Info"
+            // adds the preview, at the size the window last had with it.
+            bool saved = _settings.SetupBounds.Width >= 200 && _settings.SetupBounds.Height >= 150;
+            _debugSize = saved ? _settings.SetupBounds.Size : new Size(1000, 600);
+            if (saved)
                 gtk_window_move(_setup, _settings.SetupBounds.X, _settings.SetupBounds.Y);
-                gtk_window_resize(_setup, _settings.SetupBounds.Width, _settings.SetupBounds.Height);
-            }
-            if (_settings.SetupMaximized)
-                gtk_window_maximize(_setup);
 
             IntPtr vbox = gtk_box_new(ORIENTATION_VERTICAL, 6);
             gtk_container_set_border_width(vbox, 8);
@@ -122,13 +126,10 @@ namespace BgaSpnfdr.UI
             {
                 StartCapture(prompt: true);
             });
-            AddButton(row1, "Re-try Automatic Crop", RetryAutoCrop);
+            _csvButton = AddButton(row1, "Select Route CSV", ChooseCsv);
+            AddButton(row1, "Change Notes Formatting", ChooseNotesStyle);
+            _debugButton = AddButton(row1, "Show Debug Info", ToggleDebug);
             gtk_box_pack_start(vbox, row1, 0, 0, 0);
-
-            IntPtr row2 = gtk_box_new(ORIENTATION_HORIZONTAL, 8);
-            _csvButton = AddButton(row2, "Select Route CSV", ChooseCsv);
-            AddButton(row2, "Change Notes Formatting", ChooseNotesStyle);
-            gtk_box_pack_start(vbox, row2, 0, 0, 0);
 
             _preview = gtk_drawing_area_new();
             gtk_widget_set_size_request(_preview, 320, 240);
@@ -165,7 +166,34 @@ namespace BgaSpnfdr.UI
         private void ShowSetup()
         {
             gtk_widget_show_all(_setup);
+            if (!_debug)
+            {
+                gtk_widget_hide(_preview);
+                gtk_window_resize(_setup, 1, 1); // as small as the buttons allow
+            }
             gtk_window_present(_setup);
+        }
+
+        /// <summary>"Show Debug Info" / "Hide Debug Info": the preview, and
+        /// reading details in the status line. Off, nothing is copied or
+        /// worked out for them.</summary>
+        private void ToggleDebug()
+        {
+            if (_debug)
+                RememberSetupBounds(); // the size to come back to
+            _debug = !_debug;
+            gtk_button_set_label(_debugButton, _debug ? "Hide Debug Info" : "Show Debug Info");
+            if (_debug)
+            {
+                gtk_widget_show(_preview);
+                gtk_window_resize(_setup, _debugSize.Width, _debugSize.Height);
+            }
+            else
+            {
+                gtk_widget_hide(_preview);
+                gtk_window_resize(_setup, 1, 1);
+            }
+            Tick();
         }
 
         /// <summary>"Select" before a choice has been made, "Change" after.</summary>
@@ -185,7 +213,7 @@ namespace BgaSpnfdr.UI
         private bool Tick()
         {
             bool visible = SetupVisible;
-            _processor.WantStatus = visible;
+            _processor.WantStatus = visible && _debug;
 
             // the shared window changed size: the old crop no longer fits
             // (once per size, so a failed detection doesn't loop)
@@ -208,19 +236,27 @@ namespace BgaSpnfdr.UI
 
             // a crop no score has confirmed yet is checked until one does
             // (also with no crop at all: the menu or a score will give one)
+            // and a confirmed one when no score has been read through it
+            // for a while (a menu, or the game was moved inside the window)
             bool unconfirmed = !_settings.CropVerified;
-            if (_capturing && _detector == null && _checker == null && fw > 0 && unconfirmed)
+            bool lost = !unconfirmed && Environment.TickCount64 - _processor.LastScoreSeen > LostAfter;
+            if (_capturing && _detector == null && fw > 0)
             {
-                _checker = GameFinder.Check(_settings.Crop);
-                _reported = false;
+                if (_checker == null && (unconfirmed || lost))
+                {
+                    _checker = GameFinder.Check(_settings.Crop, _settings.CropVerified || _cropFromMenu);
+                    _reported = false;
+                }
+                else if (_checker != null && !unconfirmed && !lost && !_checker.Refining)
+                    _checker = null; // the score is being read again
             }
-            _processor.WantSnapshots = visible || _detector != null || _checker != null;
+            _processor.WantSnapshots = (visible && _debug) || _detector != null || _checker != null;
 
             string text;
             if (_detector != null)
                 text = _detector.FramesLeft > 0
-                    ? $"Auto-detecting the game feed… {(_detector.FramesLeft + 9) / 10}s"
-                    : "Auto-detecting the game feed… checking it against the score";
+                    ? $"Looking for the game… {(_detector.FramesLeft + 9) / 10}s"
+                    : "Looking for the game… checking it against the score";
             else if (Environment.TickCount64 < _stickyUntil)
                 text = _sticky;
             else if (_captureStatus != null)
@@ -230,10 +266,23 @@ namespace BgaSpnfdr.UI
             else if (fw == 0)
                 text = "Waiting for the first frame from the shared window…";
             else
-                text = !unconfirmed ? _processor.Status
-                    : _settings.Crop.IsEmpty ? "Looking for the game: it is found when its menu or a score is on screen"
-                    : _cropFromMenu ? _processor.Status + "  ·  crop set from the game's menu; the first score will confirm it"
-                    : _processor.Status + "  ·  crop not confirmed yet: it is set from the game's menu, or the first score";
+            {
+                // what the user needs to know ...
+                long score = _processor.Score;
+                text = _settings.Crop.IsEmpty ? "Looking for the game: it is found when its GAME SETUP menu or a score is on screen."
+                    : unconfirmed && _cropFromMenu ? "Game found by its menu. The first score of a run will confirm it."
+                    : unconfirmed ? "Game not confirmed yet: go to its GAME SETUP menu, or start a run."
+                    : score >= 0 ? $"Ready — score {score}."
+                    : "Ready — waiting for a score.";
+                // ... and, asked for, what the reader is doing
+                if (_debug)
+                {
+                    Rectangle c = _settings.Crop;
+                    text = $"{_processor.Status}  ·  crop {c.X},{c.Y} {c.Width}x{c.Height} "
+                        + (_settings.CropVerified ? "(confirmed by the score)" : _cropFromMenu ? "(from the menu)" : "(not confirmed)")
+                        + $"  ·  frame {fw}x{fh}" + (_checker != null ? "  ·  looking for the game" : "");
+                }
+            }
             if (visible)
                 gtk_label_set_text(_status, text);
             return true;
@@ -263,6 +312,7 @@ namespace BgaSpnfdr.UI
             StopStream();
             _captureStatus = null;
             _processor.FrameWidth = _processor.FrameHeight = 0;
+            _processor.LastScoreSeen = Environment.TickCount64;
             _sizeChecked = Size.Empty;
             _stream = new PipeWireStream
             {
@@ -331,18 +381,6 @@ namespace BgaSpnfdr.UI
             _processor.WantSnapshots = true;
         }
 
-        private void RetryAutoCrop()
-        {
-            if (!_capturing)
-            {
-                ShowSticky("Capture Window not yet selected");
-                return;
-            }
-            if (_detector != null)
-                return; // already running; the countdown is in the status bar
-            StartAutoCrop(AutoCropFramesRetry);
-        }
-
         private void OnSnapshot()
         {
             Volatile.Write(ref _snapshotPosted, 0);
@@ -375,15 +413,20 @@ namespace BgaSpnfdr.UI
                     SetCrop(finder.Result, finder.Verified);
                     if (first)
                         ShowSticky(finder.Verified
-                            ? "Gameplay feed auto-detected and confirmed by the score."
-                            : "Gameplay feed auto-detected from what moves. If the red box looks wrong, go to the game's " +
-                              "menu, or just start: the first score sets it right.", 12);
+                            ? "Game found and confirmed by the score."
+                            : "Game found by what moves, which other moving things can fool. Its GAME SETUP menu or " +
+                              "the first score of a run will set it right.", 12);
                 }
                 else if (finder.Verified)
                 {
-                    SetCrop(finder.Result, true);
-                    if (first)
-                        ShowSticky("Score found — the crop is confirmed.", 8);
+                    bool confirmed = _settings.CropVerified, moved = finder.Result != _settings.Crop;
+                    if (moved || !confirmed)
+                        SetCrop(finder.Result, true);
+                    _processor.LastScoreSeen = Environment.TickCount64;
+                    if (confirmed && moved)
+                        ShowSticky("The game was found somewhere else in the window — now reading it there.", 8);
+                    else if (first && !confirmed)
+                        ShowSticky("Score found — the game's place in the window is confirmed.", 8);
                 }
                 // a finder that has just found the score goes on to steady
                 // its result; one that hasn't is started afresh by Tick
@@ -564,16 +607,19 @@ namespace BgaSpnfdr.UI
 
         // ---------- lifecycle ----------
 
+        /// <summary>The setup window's place, and its size while the debug
+        /// info is showing (without it, it is as small as it can be).</summary>
         private void RememberSetupBounds()
         {
-            if (!SetupVisible)
-                return;
-            _settings.SetupMaximized = gtk_window_is_maximized(_setup) != 0;
-            if (_settings.SetupMaximized)
+            if (!SetupVisible || gtk_window_is_maximized(_setup) != 0)
                 return;
             gtk_window_get_position(_setup, out int x, out int y);
-            gtk_window_get_size(_setup, out int w, out int h);
-            _settings.SetupBounds = new Rectangle(x, y, w, h);
+            if (_debug)
+            {
+                gtk_window_get_size(_setup, out int w, out int h);
+                _debugSize = new Size(w, h);
+            }
+            _settings.SetupBounds = new Rectangle(x, y, _debugSize.Width, _debugSize.Height);
         }
 
         private void SaveSettings()
