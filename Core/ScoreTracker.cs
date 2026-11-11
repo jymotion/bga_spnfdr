@@ -10,7 +10,21 @@ namespace BgaSpnfdr
     /// </summary>
     internal sealed class ScoreTracker
     {
-#if READ_EVERY_FRAME
+#if GRAPHICS_CAPTURE
+        // Windows build with Windows.Graphics.Capture: reads 30 a second with
+        // it and 10 a second when it falls back to PrintWindow, so the host
+        // picks the rule to match (ReadEveryFrame). Starts at 10 a second.
+        private int ConfirmReads = 2;
+        private int BackwardConfirmReads = 5;
+
+        /// <summary>true: 30 reads a second, the Linux build's 3 and 8
+        /// reads; false: 10 a second, the normal Windows build's 2 and 5.</summary>
+        public void ReadEveryFrame(bool on)
+        {
+            ConfirmReads = on ? 3 : 2;
+            BackwardConfirmReads = on ? 8 : 5;
+        }
+#elif READ_EVERY_FRAME
         // Builds that read every frame (~30 a second, the Linux build) need
         // more reads to cover the same ~0.1 s span: back-to-back frames look
         // almost identical, so a misread can repeat. On the reference run

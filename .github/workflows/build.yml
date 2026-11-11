@@ -20,12 +20,18 @@ jobs:
         run: dotnet test Tests -c Release
       - name: Windows app
         run: dotnet build Windows/bga_spnfdr.csproj -c Release -o out/windows
-      - name: Windows 30-reads-a-second test build (logs CPU and timings)
+      - name: Windows app with Windows.Graphics.Capture (30 reads/s; not adopted yet)
+        run: dotnet build Windows/bga_spnfdr.csproj -c Release -p:GraphicsCapture=true --no-incremental -o out/graphicscapture
+      - name: Windows 30-reads-a-second test build (rotates capture methods, logs CPU and scores)
         run: dotnet build Windows/bga_spnfdr.csproj -c Release -p:PerfTest=true --no-incremental -o out/perftest
       - uses: actions/upload-artifact@v4
         with:
           name: bga_spnfdr-windows
           path: out/windows/bga_spnfdr.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bga_spnfdr-windows-graphics-capture
+          path: out/graphicscapture/bga_spnfdr.exe
       - uses: actions/upload-artifact@v4
         with:
           name: bga_spnfdr-windows-30fps-test

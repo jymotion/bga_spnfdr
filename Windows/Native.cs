@@ -110,6 +110,20 @@ namespace BgaSpnfdr
                    && cloaked != 0;
         }
 
+#if GRAPHICS_CAPTURE
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmGetWindowAttribute(IntPtr hWnd, int attr, out RECT value, int size);
+
+        /// <summary>The window's visible frame on screen: GetWindowRect
+        /// without the invisible resize borders. Windows.Graphics.Capture's
+        /// pictures start here.</summary>
+        public static bool GetExtendedFrameBounds(IntPtr hWnd, out RECT rect)
+        {
+            const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+            return DwmGetWindowAttribute(hWnd, DWMWA_EXTENDED_FRAME_BOUNDS, out rect, Marshal.SizeOf(typeof(RECT))) == 0;
+        }
+#endif
+
         [DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(IntPtr hWnd, int attr, ref int value, int size);
 

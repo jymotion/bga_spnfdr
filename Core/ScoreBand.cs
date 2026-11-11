@@ -24,6 +24,19 @@ namespace BgaSpnfdr
             last = Math.Min(frameHeight - 1, (int)Math.Ceiling(crop.Y + (Top + Rows) * sy) + 1);
         }
 
+#if GRAPHICS_CAPTURE
+        /// <summary>The frame columns (inclusive) Fill reads for this crop.
+        /// Windows.Graphics.Capture build: only these columns of RowsNeeded's
+        /// rows are copied back from the graphics card.</summary>
+        public static void ColumnsNeeded(Rectangle crop, int frameWidth, out int first, out int last)
+        {
+            double sx = crop.Width / (double)DigitReader.ReferenceCropWidth;
+            double x0 = crop.X + BattleTanx.ScoreFraction.X * crop.Width;
+            first = Math.Max(0, (int)Math.Floor(x0) - 1);
+            last = Math.Min(frameWidth - 1, (int)Math.Ceiling(x0 + Width * sx) + 1);
+        }
+#endif
+
         /// <summary>
         /// Fills band (Rows x Width) from px, which holds frame rows
         /// first..last (stride bytes each, 4 bytes per pixel: B,G,R,x, or
