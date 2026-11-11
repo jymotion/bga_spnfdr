@@ -67,8 +67,8 @@ namespace BgaSpnfdr
                         s.Crop = ParseRect(value, s.Crop);
                         break;
                     case "CropWindowSize":
-                        var size = ParseRect(value + ",0,0", Rectangle.Empty);
-                        s.CropWindowSize = new Size(size.X, size.Y);
+                        var made = ParseRect(value + ",0,0", Rectangle.Empty);
+                        s.CropWindowSize = new Size(made.X, made.Y);
                         break;
                     case "Csv":
                         s.CsvPath = value;
