@@ -85,6 +85,59 @@ namespace BgaSpnfdr.Tests
             Assert.Null(Frame(t, "273875")); // null = leave current note up
             Assert.Equal("score 273875", t.Status);
         }
+
+        [Fact]
+        public void ReadingEveryFrameNeedsThreeAndEightReads()
+        {
+            var t = new ScoreTracker();
+            t.ReadEveryFrame(true);
+            Frame(t, "273850");
+            Frame(t, "273850");
+            Assert.Equal("reading 273850 (2/3)", t.Status);
+            Assert.Equal("note A", Frame(t, "273850"));
+            Frame(t, "25");
+            Assert.Equal("reading 25 (1/8)", t.Status);
+
+            t.ReadEveryFrame(false); // back to 10 a second
+            Frame(t, "273875");
+            Assert.Equal("reading 273875 (1/2)", t.Status);
+        }
+    }
+
+    public class ScoreBandTests
+    {
+        /// <summary>The Windows app copies only ColumnsNeeded x RowsNeeded
+        /// back from the graphics card: Fill must give the same band when
+        /// every other pixel is junk.</summary>
+        [Fact]
+        public void FillReadsOnlyTheColumnsAndRowsNeeded()
+        {
+            var random = new System.Random(1);
+            for (int i = 0; i < 2000; i++)
+            {
+                int fw = random.Next(100, 2600), fh = random.Next(100, 1500);
+                int cw = random.Next(20, fw + 1), ch = random.Next(20, fh + 1);
+                var crop = i % 5 == 0 // some crops run off the frame
+                    ? new System.Drawing.Rectangle(random.Next(0, fw), random.Next(0, fh), cw, ch)
+                    : new System.Drawing.Rectangle(random.Next(0, fw - cw + 1), random.Next(0, fh - ch + 1), cw, ch);
+                ScoreBand.RowsNeeded(crop, fh, out int first, out int last);
+                ScoreBand.ColumnsNeeded(crop, fw, out int left, out int right);
+                if (last < first || right < left)
+                    continue;
+                int stride = fw * 4;
+                var frame = new byte[stride * (last - first + 1)];
+                var strip = new byte[frame.Length];
+                random.NextBytes(frame);
+                random.NextBytes(strip); // junk outside the columns
+                for (int y = 0; y <= last - first; y++)
+                    System.Array.Copy(frame, y * stride + left * 4, strip, y * stride + left * 4, (right - left + 1) * 4);
+                var expected = new byte[ScoreBand.Width * ScoreBand.Rows];
+                var actual = new byte[expected.Length];
+                ScoreBand.Fill(frame, stride, first, last, fw, crop, false, expected);
+                ScoreBand.Fill(strip, stride, first, last, fw, crop, false, actual);
+                Assert.Equal(expected, actual);
+            }
+        }
     }
 
     public class RouteCsvTests

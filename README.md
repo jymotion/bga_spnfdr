@@ -11,7 +11,9 @@ Windows and Linux.
    your desktop's screen-sharing prompt opens (the same one OBS and browsers
    use); pick the window there. Linux remembers the choice, so later
    launches reconnect without asking (where the desktop supports it, e.g.
-   KDE Plasma and GNOME).
+   KDE Plasma and GNOME). On Windows 10, Windows draws a yellow border
+   around the window while it's being captured (Windows 11 lets the app
+   turn it off).
 2. The program attempts to **auto-detect the game feed** within the window by
    watching for movement for a few seconds. If it fails to accurately crop
    the game feed, you can click **Re-try Automatic Crop** to try again or
@@ -104,12 +106,20 @@ Measured on a full recorded run against a hand-verified answer key
 
 | | Scores confirmed | Wrong | Time per read |
 |---|---|---|---|
-| Windows (10 reads/s) | 103 | 0 | ~0.4 ms |
-| Linux (30 reads/s) | 109 | 0 | ~0.4 ms |
+| Windows and Linux (30 reads/s) | 109 | 0 | ~0.4 ms |
+| Windows on its PrintWindow fallback (10 reads/s) | 103 | 0 | ~0.4 ms |
 
 The scores it misses were on screen for under ~0.2 s. Run side by side on
 Windows, it beat the Windows OCR this app used before (104 vs 89 scores,
 none wrong either way, ~1 ms vs 45 ms per read).
+
+The Windows app captures with Windows.Graphics.Capture (Windows 10 version
+1903 and later): Windows keeps the window's picture on the graphics card,
+and each read copies back only the score strip, so reading 30 times a
+second stays cheap whatever the window's size. On a test PC it took
+0.36 ms per read against 2.6 ms for PrintWindow, and used less CPU in total
+than PrintWindow at 30 reads a second. On older Windows, or if it fails, the
+app falls back to PrintWindow at 10 reads a second.
 
 ## Safeguards
 
@@ -124,9 +134,10 @@ The displayed score only changes when a read survives all of these checks
    on 2 consecutive reads; a *lower* value than the current score, or a
    forward jump over 50,000, needs 5 (scores only go up mid-run and never
    leap; such reads are fragments with lost leading digits, like "25" off
-   the end of 468025). The Linux build reads every frame (~30 a second)
-   instead of 10, so it needs 3 and 8 to cover the same span of time;
+   the end of 468025). Both apps normally read every frame (~30 a second)
+   instead of 10, so they need 3 and 8 to cover the same span of time;
    back-to-back frames look almost identical, so a misread can repeat.
+   (On its 10-a-second fallback the Windows app uses 2 and 5.)
 3. **Hold on loss** — when the score is hidden (menus, cutscenes,
    explosions) the last confirmed value is kept rather than cleared, and a
    note stays up until a different score has one.

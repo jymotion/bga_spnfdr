@@ -1,4 +1,3 @@
-#if GRAPHICS_CAPTURE
 using System;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -7,9 +6,9 @@ using System.Runtime.InteropServices;
 namespace BgaSpnfdr
 {
     /// <summary>
-    /// Gets each tick's pixels from the capture window (GraphicsCapture build
-    /// only): with Windows.Graphics.Capture where Windows has it (10 version
-    /// 1903 and later), with PrintWindow before that or if it fails.
+    /// Gets each tick's pixels from the capture window: with
+    /// Windows.Graphics.Capture where Windows has it (10 version 1903 and
+    /// later), with PrintWindow before that or if it fails.
     /// Everything comes out in PrintWindow's coordinates (the window
     /// rectangle, invisible resize borders included), so crops saved by
     /// earlier versions still fit:
@@ -243,4 +242,3 @@ namespace BgaSpnfdr
         }
     }
 }
-#endif

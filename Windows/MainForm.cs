@@ -2,10 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace BgaSpnfdr
@@ -21,12 +19,8 @@ namespace BgaSpnfdr
         private const int AutoCropFramesRetry = 20;   // ~2s for "Re-try Automatic Crop"
 
         private readonly AppSettings _settings;
-#if GRAPHICS_CAPTURE
         private readonly FrameSource _source = new FrameSource();
         private int _reads; // reads at 30 a second, for the ~10-a-second side tasks
-#else
-        private readonly WindowCapture _windowCapture = new WindowCapture();
-#endif
         private readonly DigitReader _reader = new DigitReader();
         private WindowPicker _picker;
         private NotesForm _notesForm;
@@ -39,7 +33,7 @@ namespace BgaSpnfdr
         private Timer _timer;
 
         private IntPtr _targetWindow = IntPtr.Zero;
-        private Bitmap _capture; // shared buffer owned by _windowCapture (_source)
+        private Bitmap _capture; // shared buffer owned by _source
 
         private bool _manualCropMode;
         private bool _dragging;
@@ -54,9 +48,6 @@ namespace BgaSpnfdr
 
         private readonly ScoreTracker _tracker = new ScoreTracker();
         private readonly byte[] _band = new byte[ScoreBand.Width * ScoreBand.Rows];
-#if !GRAPHICS_CAPTURE
-        private byte[] _bandRows = new byte[0]; // capture rows under the band
-#endif
         private Rectangle _readCrop;             // crop the reader is calibrated for
 #if PERF_TEST
         private readonly PerfTest _perf = new PerfTest();
@@ -424,7 +415,6 @@ namespace BgaSpnfdr
 
         // ---------- capture loop ----------
 
-#if GRAPHICS_CAPTURE
         private void CaptureFrame()
         {
             if (_targetWindow == IntPtr.Zero)
@@ -450,7 +440,7 @@ namespace BgaSpnfdr
             SetReadRate(_perf.Fast);
 #else
             // 30 reads a second with Windows.Graphics.Capture; PrintWindow
-            // costs much more per read, so it stays at 10 as before
+            // (its fallback) costs much more per read, so that reads 10
             SetReadRate(_source.UsedGraphicsCapture);
 #endif
             if (!ok)
@@ -506,43 +496,6 @@ namespace BgaSpnfdr
             _timer.Interval = interval;
             _tracker.ReadEveryFrame(fast);
         }
-#else
-        private void CaptureFrame()
-        {
-            if (_targetWindow == IntPtr.Zero)
-                return;
-
-            var bmp = _windowCapture.Capture(_targetWindow);
-            if (bmp == null)
-            {
-                if (!_picker.Active)
-                    _statusLabel.Text = Native.IsWindow(_targetWindow)
-                        ? "Capture failed — is the window minimized? (Restore it; covering it is fine.)"
-                        : "That window was closed. Click \"Select Capture Window\" to pick another.";
-                return;
-            }
-            _capture = bmp;
-            if (_previewBox.Visible && Visible)
-                _previewBox.Invalidate();
-
-            if (_detector != null)
-                FeedAutoCrop();
-
-            ReadScore();
-
-            // while picking a window, the status bar shows the pick prompt —
-            // don't stomp it every tick (sticky messages get a few seconds)
-            if (_detector != null)
-            {
-                int seconds = (_detector.FramesLeft * _timer.Interval + 999) / 1000;
-                _statusLabel.Text = $"Auto-detecting the game feed… {seconds}s";
-            }
-            else if (!_picker.Active)
-            {
-                _statusLabel.Text = DateTime.Now < _stickyUntil ? _stickyStatus : _tracker.Status;
-            }
-        }
-#endif
 
         /// <summary>The score area in capture-pixel coordinates: the BattleTanx
         /// fractional rectangle applied to the crop.</summary>
@@ -565,7 +518,6 @@ namespace BgaSpnfdr
         private void ReadScore()
         {
             var crop = _settings.Crop;
-#if GRAPHICS_CAPTURE
             // the rows under the band, which _source captured for this crop
             if (crop.Width <= 0 || crop.Height <= 0 || _source.Last < _source.First)
                 return;
@@ -576,32 +528,6 @@ namespace BgaSpnfdr
             }
             ScoreBand.Fill(_source.Rows, _source.Stride, _source.First, _source.Last, _source.Size.Width,
                 crop, false, _band);
-#else
-            if (_capture == null || crop.Width <= 0 || crop.Height <= 0)
-                return;
-            if (crop != _readCrop)
-            {
-                _reader.Reset(); // re-find the band's exact rows for the new crop
-                _readCrop = crop;
-            }
-            ScoreBand.RowsNeeded(crop, _capture.Height, out int first, out int last);
-            if (last < first)
-                return;
-            var data = _capture.LockBits(new Rectangle(0, first, _capture.Width, last - first + 1),
-                ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-            try
-            {
-                int n = data.Stride * (last - first + 1);
-                if (_bandRows.Length < n)
-                    _bandRows = new byte[n];
-                Marshal.Copy(data.Scan0, _bandRows, 0, n);
-                ScoreBand.Fill(_bandRows, data.Stride, first, last, _capture.Width, crop, false, _band);
-            }
-            finally
-            {
-                _capture.UnlockBits(data);
-            }
-#endif
             string read = _reader.Read(_band, ScoreBand.Width, ScoreBand.Rows);
             string note = _tracker.HandleRead(read, _scoreTable);
             if (note != null)
@@ -718,11 +644,7 @@ namespace BgaSpnfdr
             _timer?.Stop();
             SaveSettings(); // capture the notes window's final position
             _picker.Dispose();
-#if GRAPHICS_CAPTURE
             _source.Dispose();
-#else
-            _windowCapture.Dispose();
-#endif
             base.OnFormClosed(e);
         }
     }

@@ -1,4 +1,3 @@
-#if GRAPHICS_CAPTURE
 using System;
 using System.Drawing;
 using System.Runtime.CompilerServices;
@@ -15,11 +14,11 @@ namespace BgaSpnfdr
 {
     /// <summary>
     /// Captures one window with Windows.Graphics.Capture (Windows 10 version
-    /// 1903 and later; GraphicsCapture build only). Windows itself keeps the
-    /// window's newest picture in a texture on the graphics card; Copy brings
-    /// back only the part asked for (the score strip on every read, the whole
-    /// frame only for the preview and auto-crop), so the cost of a read
-    /// doesn't grow with the window's size. Frame coordinates start at the
+    /// 1903 and later). Windows itself keeps the window's newest picture in a
+    /// texture on the graphics card; Copy brings back only the part asked for
+    /// (the score strip on every read, the whole frame only for the preview
+    /// and auto-crop), so the cost of a read doesn't grow with the window's
+    /// size. Frame coordinates start at the
     /// window's visible frame (DWMWA_EXTENDED_FRAME_BOUNDS); FrameSource maps
     /// them to PrintWindow's.
     ///
@@ -371,4 +370,3 @@ namespace BgaSpnfdr
         }
     }
 }
-#endif

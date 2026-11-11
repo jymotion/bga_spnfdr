@@ -10,34 +10,31 @@ namespace BgaSpnfdr
     /// </summary>
     internal sealed class ScoreTracker
     {
-#if GRAPHICS_CAPTURE
-        // Windows build with Windows.Graphics.Capture: reads 30 a second with
-        // it and 10 a second when it falls back to PrintWindow, so the host
-        // picks the rule to match (ReadEveryFrame). Starts at 10 a second.
+        // Identical consecutive reads a new value needs. Lower values and huge
+        // jumps (BackwardConfirmReads) are usually fragments or junk-prefix
+        // reads and need much stronger evidence. Reading every frame (~30 a
+        // second) takes 3 and 8 to cover about the same ~0.1 s span as 2 and 5
+        // at 10 a second: back-to-back frames look almost identical, so a
+        // misread can repeat. On the reference run (Tools/ReaderBench) 3/8 gave
+        // no wrong scores and missed none that were on screen for 2+ frames.
+        // The Linux build always reads every frame; the Windows app does with
+        // Windows.Graphics.Capture and switches to 10 a second when it has to
+        // fall back to PrintWindow (ReadEveryFrame).
+#if READ_EVERY_FRAME
+        private int ConfirmReads = 3;
+        private int BackwardConfirmReads = 8;
+#else
         private int ConfirmReads = 2;
         private int BackwardConfirmReads = 5;
+#endif
 
-        /// <summary>true: 30 reads a second, the Linux build's 3 and 8
-        /// reads; false: 10 a second, the normal Windows build's 2 and 5.</summary>
+        /// <summary>Picks the rule for the read rate: true for ~30 reads a
+        /// second (3 and 8 reads), false for 10 (2 and 5).</summary>
         public void ReadEveryFrame(bool on)
         {
             ConfirmReads = on ? 3 : 2;
             BackwardConfirmReads = on ? 8 : 5;
         }
-#elif READ_EVERY_FRAME
-        // Builds that read every frame (~30 a second, the Linux build) need
-        // more reads to cover the same ~0.1 s span: back-to-back frames look
-        // almost identical, so a misread can repeat. On the reference run
-        // (Tools/ReaderBench) 3/8 gave no wrong scores and missed none that
-        // were on screen for 2+ frames.
-        private const int ConfirmReads = 3;
-        private const int BackwardConfirmReads = 8;
-#else
-        private const int ConfirmReads = 2;         // identical consecutive reads needed
-        private const int BackwardConfirmReads = 5; // lower values / huge jumps are usually
-                                                    // fragments or junk-prefix reads and
-                                                    // need much stronger evidence
-#endif
 
         // plain fields rather than properties: properties generate extra
         // methods and metadata, and the Windows exe is kept small
