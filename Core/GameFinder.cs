@@ -126,6 +126,12 @@ namespace BgaSpnfdr
         /// feeding, and it returns true once more with a steadier Result.</summary>
         public bool Refining;
 
+        /// <summary>With Verified: the picture's top edge was seen, so its
+        /// height is measured (to a pixel or two in 423 rows). Without, the
+        /// height is from the digits alone and can be 5% off: worth checking
+        /// again later, in a scene that shows the edge.</summary>
+        public bool Ruled;
+
         /// <summary>Set once Feed returns true: Result is where the game's
         /// menu was recognised (Core/MenuFinder); no score yet.</summary>
         public bool Recognized;
@@ -427,6 +433,7 @@ namespace BgaSpnfdr
             Rectangle crop = ScoreFinder.Crop(middle, left >= 0 ? left : hint.IsEmpty ? double.NaN : hint.X);
             Result = !hint.IsEmpty && Fits(hint, crop, middle, _trusted && !ruled ? 0.08 : 0.03) ? hint : crop;
             Verified = true;
+            Ruled = ruled;
             Recognized = false;
             Refining = !last;
             _reported = true;

@@ -47,6 +47,8 @@ namespace BgaSpnfdr.UI
         private bool _reported; // the finder at work has given a result already
         private Size _sizeChecked;          // frame size the crop was last checked against
         private bool _cropFromMenu; // the crop is where the game's menu was recognised
+        private bool _lost;         // a confirmed crop, but no score read through it for a while
+        private long _measureNext;  // when to try again to measure the picture's height (TickCount64)
 
         private byte[] _snapshot;
         private int _snapW, _snapH;
@@ -65,9 +67,10 @@ namespace BgaSpnfdr.UI
             _processor.NoteReady = note => Callbacks.Post(() => _notes.SetNote(note));
             _processor.CropMoved = crop => Callbacks.Post(() =>
             {
-                // a score was read starting left of the crop's edge
+                // a score was read starting left of the crop's edge, or
+                // well off the middle of its band
                 if (_detector == null && _capturing)
-                    SetCrop(crop, _settings.CropVerified);
+                    SetCrop(crop, _settings.CropVerified, _cropFromMenu);
             });
             _processor.SnapshotReady = () =>
             {
@@ -239,7 +242,11 @@ namespace BgaSpnfdr.UI
             // and a confirmed one when no score has been read through it
             // for a while (a menu, or the game was moved inside the window)
             bool unconfirmed = !_settings.CropVerified;
-            bool lost = !unconfirmed && Environment.TickCount64 - _processor.LastScoreSeen > LostAfter;
+            bool lost = _lost = !unconfirmed && Environment.TickCount64 - _processor.LastScoreSeen > LostAfter;
+            // ... or its height hasn't been measured yet (the picture's top
+            // edge doesn't show in a dark scene): tried again every 10 s
+            bool measure = !unconfirmed && !_settings.CropRuled && Environment.TickCount64 >= _measureNext;
+            lost |= measure;
             if (_capturing && _detector == null && fw > 0)
             {
                 if (_checker == null && (unconfirmed || lost))
@@ -269,7 +276,8 @@ namespace BgaSpnfdr.UI
             {
                 // what the user needs to know ...
                 long score = _processor.Score;
-                text = _settings.Crop.IsEmpty ? "Looking for the game: it is found when its GAME SETUP menu or a score is on screen."
+                text = _lost ? "Ready — no score on screen; checking the game is still where it was."
+                    : _settings.Crop.IsEmpty ? "Looking for the game: it is found when its GAME SETUP menu or a score is on screen."
                     : unconfirmed && _cropFromMenu ? "Game found by its menu. The first score of a run will confirm it."
                     : unconfirmed ? "Game not confirmed yet: go to its GAME SETUP menu, or start a run."
                     : score >= 0 ? $"Ready — score {score}."
@@ -279,8 +287,10 @@ namespace BgaSpnfdr.UI
                 {
                     Rectangle c = _settings.Crop;
                     text = $"{_processor.Status}  ·  crop {c.X},{c.Y} {c.Width}x{c.Height} "
-                        + (_settings.CropVerified ? "(confirmed by the score)" : _cropFromMenu ? "(from the menu)" : "(not confirmed)")
-                        + $"  ·  frame {fw}x{fh}" + (_checker != null ? "  ·  looking for the game" : "");
+                        + (_lost ? "(no score for 15 s: checking where the game is)" : _settings.CropVerified ? "(confirmed by the score)"
+                            : _cropFromMenu ? "(from the menu)" : "(not confirmed)")
+                        + $"  ·  frame {fw}x{fh}"
+                        + (_checker == null || _lost ? "" : unconfirmed ? "  ·  looking for the game" : "  ·  measuring the picture's height");
                 }
             }
             if (visible)
@@ -398,6 +408,7 @@ namespace BgaSpnfdr.UI
                 if (finder.Recognized)
                 {
                     // the game's menu is showing: that is where the picture is
+                    _settings.CropRuled = true; // the whole picture was matched
                     SetCrop(finder.Result, false, fromMenu: true);
                     ShowSticky("Game menu recognised — the crop is set to it. The first score will confirm it.", 10);
                 }
@@ -410,6 +421,7 @@ namespace BgaSpnfdr.UI
                 {
                     // no menu and perhaps no score to go by: the box is from
                     // what moves and the picture's edges
+                    _settings.CropRuled = finder.Verified && finder.Ruled;
                     SetCrop(finder.Result, finder.Verified);
                     if (first)
                         ShowSticky(finder.Verified
@@ -420,10 +432,15 @@ namespace BgaSpnfdr.UI
                 else if (finder.Verified)
                 {
                     bool confirmed = _settings.CropVerified, moved = finder.Result != _settings.Crop;
-                    if (moved || !confirmed)
-                        SetCrop(finder.Result, true);
+                    bool ruled = finder.Ruled || (!moved && _settings.CropRuled);
+                    if (moved || !confirmed || ruled != _settings.CropRuled)
+                    {
+                        _settings.CropRuled = ruled;
+                        SetCrop(finder.Result, true, _cropFromMenu && !moved);
+                    }
                     _processor.LastScoreSeen = Environment.TickCount64;
-                    if (confirmed && moved)
+                    _measureNext = Environment.TickCount64 + 10000;
+                    if (confirmed && moved && _lost)
                         ShowSticky("The game was found somewhere else in the window — now reading it there.", 8);
                     else if (first && !confirmed)
                         ShowSticky("Score found — the game's place in the window is confirmed.", 8);
@@ -507,7 +524,8 @@ namespace BgaSpnfdr.UI
             cairo_rectangle(cr, cx, cy, cw, ch);
             cairo_stroke(cr);
             cairo_move_to(cr, cx + 4, cy + 15);
-            cairo_show_text(cr, _settings.CropVerified ? "game feed (confirmed by the score)"
+            cairo_show_text(cr, _lost ? "game feed (no score for a while: checking it is still here)"
+                : _settings.CropVerified ? "game feed (confirmed by the score)"
                 : _cropFromMenu ? "game feed (from the game's menu)" : "game feed (not confirmed yet)");
 
             var f = BattleTanx.ScoreFraction;

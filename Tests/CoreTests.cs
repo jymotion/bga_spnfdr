@@ -319,8 +319,11 @@ namespace BgaSpnfdr.Tests
         {
             var crop = new System.Drawing.Rectangle(100, 0, 617, 474);
             // first digit found 4 px into the margin: 20 px left of the crop
-            Assert.Equal(new System.Drawing.Rectangle(72, 0, 617, 474), ScoreBand.Recenter(crop, ScoreBand.LeftMargin - 20));
-            Assert.Equal(crop, ScoreBand.Recenter(crop, ScoreBand.LeftMargin + 3));
+            Assert.Equal(new System.Drawing.Rectangle(72, 0, 617, 474), ScoreBand.Recenter(crop, ScoreBand.LeftMargin - 20, ScoreBand.Margin));
+            Assert.Equal(crop, ScoreBand.Recenter(crop, ScoreBand.LeftMargin + 3, ScoreBand.Margin + 1));
+            // the score read 4 rows below the middle of the band, at twice the reference size
+            var big = new System.Drawing.Rectangle(100, 50, 1234, 948);
+            Assert.Equal(new System.Drawing.Rectangle(100, 58, 1234, 948), ScoreBand.Recenter(big, ScoreBand.LeftMargin + 40, ScoreBand.Margin + 4));
         }
     }
 

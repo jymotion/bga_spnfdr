@@ -203,10 +203,14 @@ capture and checks the crop against the truth:
 A tester's capture of OBS's own window on the GAME SETUP menu (the game
 beside two webcams) was recognised to within a pixel as well.
 
-If a level puts the score at the very edge of the picture and the crop's
-left edge is a little too far right, the score is read starting in the
-margin the reader keeps there (24 reference pixels), and the crop is moved
-left.
+Two things keep correcting a confirmed crop while the score is read. If
+the score is read starting in the margin the reader keeps left of the crop
+(24 reference pixels: a level can put the score at the very edge of the
+picture), or 2 or more rows off the middle of its band, the crop is moved
+to fit. And if the picture's top edge couldn't be seen when the crop was
+confirmed (a dark scene against black), its height is only known from the
+digits, to about 5%; the program then tries again every 10 s until a
+scene shows the edge.
 
 ## Safeguards
 

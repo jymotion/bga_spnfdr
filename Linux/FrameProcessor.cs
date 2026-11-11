@@ -41,7 +41,8 @@ namespace BgaSpnfdr
         /// <summary>PipeWire thread: a new snapshot can be taken.</summary>
         public Action SnapshotReady;
         /// <summary>PipeWire thread: the score was read starting left of
-        /// the crop's edge, so the crop belongs here (ScoreBand.Recenter).</summary>
+        /// the crop's edge or well off the middle of its band, so the crop
+        /// belongs here (ScoreBand.Recenter).</summary>
         public Action<Rectangle> CropMoved;
 
         private readonly object _snapshotLock = new object();
@@ -108,7 +109,7 @@ namespace BgaSpnfdr
                     if (_tracker.ReadStands)
                     {
                         LastScoreSeen = Environment.TickCount64;
-                        Rectangle moved = ScoreBand.Recenter(cfg.Crop, _reader.FoundFirst);
+                        Rectangle moved = ScoreBand.Recenter(cfg.Crop, _reader.FoundFirst, _reader.FoundOffset);
                         if (moved != cfg.Crop && moved != _lastMoved)
                         {
                             _lastMoved = moved;

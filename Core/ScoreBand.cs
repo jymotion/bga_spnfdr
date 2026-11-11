@@ -35,13 +35,21 @@ namespace BgaSpnfdr
         /// is then found in the margin (firstColumn: DigitReader.FoundFirst
         /// of a read that stands). Returns the crop moved left so that the
         /// score starts 8 reference pixels inside it, or unchanged if it
-        /// already starts inside.</summary>
-        public static Rectangle Recenter(Rectangle crop, int firstColumn)
+        /// already starts inside.
+        /// It is also moved up or down when the score is read 2 or more
+        /// rows from the middle of the band (offset: DigitReader.FoundOffset):
+        /// the reader only looks Margin rows either way, and a crop whose
+        /// height was worked out without sight of the picture's top edge can
+        /// use most of that up.</summary>
+        public static Rectangle Recenter(Rectangle crop, int firstColumn, int offset)
         {
-            int inside = firstColumn - LeftMargin;
-            if (inside >= 2 || crop.Width <= 0)
+            if (crop.Width <= 0 || crop.Height <= 0)
                 return crop;
-            crop.X -= (int)Math.Ceiling((8 - inside) * crop.Width / (double)DigitReader.ReferenceCropWidth);
+            int inside = firstColumn - LeftMargin;
+            if (inside < 2)
+                crop.X -= (int)Math.Ceiling((8 - inside) * crop.Width / (double)DigitReader.ReferenceCropWidth);
+            if (offset >= 0 && Math.Abs(offset - Margin) >= 2)
+                crop.Y += (int)Math.Round((offset - Margin) * crop.Height / (double)DigitReader.ReferenceCropHeight);
             return crop;
         }
 
