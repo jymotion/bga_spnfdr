@@ -122,6 +122,49 @@ namespace BgaSpnfdr.Tests
         }
     }
 
+    public class DigitReaderTests
+    {
+        /// <summary>A 32-bit Windows matches digits in whole numbers
+        /// instead of with Vector4 (see Core/DigitReader): both ways must
+        /// read the same.</summary>
+        [Fact]
+        public void BothWaysOfMatchingReadTheSame()
+        {
+            var random = new System.Random(3);
+            const int width = 120, rows = DigitReader.BandHeight + 4;
+            var reader = new DigitReader();
+            {
+                for (int i = 0; i < 300; i++)
+                {
+                    // a few digits on noise of varying strength, some of them faint
+                    var band = new byte[width * rows];
+                    int noise = random.Next(1, 120);
+                    for (int k = 0; k < band.Length; k++)
+                        band[k] = (byte)random.Next(noise);
+                    int at = random.Next(2, 20), top = random.Next(0, 5), digits = random.Next(1, 7);
+                    double strength = 0.3 + random.NextDouble() * 0.7;
+                    for (int n = 0; n < digits; n++, at += 13)
+                    {
+                        int digit = random.Next(10);
+                        for (int r = 0; r < DigitReader.BandHeight; r++)
+                            for (int c = 0; c < DigitReader.GlyphWidth; c++)
+                                band[(top + r) * width + at + c] = (byte)(band[(top + r) * width + at + c] * (1 - strength)
+                                    + DigitReader.Glyph(digit, r, c) * strength);
+                    }
+                    reader.Wide = true;
+                    string wide = reader.Scan(band, width, rows, 0);
+                    float gain = reader.FoundGain, left = reader.LeftMatch;
+                    int offset = reader.FoundOffset;
+                    reader.Wide = false;
+                    Assert.Equal(wide, reader.Scan(band, width, rows, 0));
+                    Assert.Equal(offset, reader.FoundOffset);
+                    Assert.InRange(reader.FoundGain, gain - 1e-4f, gain + 1e-4f);
+                    Assert.InRange(reader.LeftMatch, left - 1e-4f, left + 1e-4f);
+                }
+            }
+        }
+    }
+
     public class ScoreBandTests
     {
         /// <summary>The Windows app copies only ColumnsNeeded x RowsNeeded
@@ -499,6 +542,123 @@ namespace BgaSpnfdr.Tests
         {
             GameFinder f = Run(GameFinder.Check(Picture, true), 0, "", Picture, 60);
             Assert.False(f.Verified);
+        }
+
+        // ---------- Core/GameWatch: what the apps do with all that ----------
+
+        /// <summary>Runs a watch the way the apps do, 10 frames a second:
+        /// Tick, then Feed while it wants frames. Returns the time after.</summary>
+        private static long Run(GameWatch watch, long now, int frames, System.Func<int, byte[]> frame, int width, int height,
+            System.Func<bool> until = null)
+        {
+            var area = new System.Drawing.Rectangle(0, 0, width, height);
+            for (int i = 0; i < frames && (until == null || !until()); i++, now += 100)
+            {
+                watch.Tick(now, new System.Drawing.Size(width, height));
+                if (watch.Busy)
+                    watch.Feed(frame(i), width, height, width * 4, false, area, now);
+            }
+            return now;
+        }
+
+        [Fact]
+        public void WatchSetsTheCropOnTheMenuAndSaysSo()
+        {
+            var menu = new System.Drawing.Rectangle(250, 100, 480, 270);
+            const int width = 800, height = 450;
+            byte[] px = Frame(0, 30, "", System.Drawing.Rectangle.Empty, width, height);
+            for (int y = menu.Top; y < menu.Bottom; y++)
+                for (int x = menu.Left; x < menu.Right; x++)
+                {
+                    byte v = MenuFinder.Value((x - menu.X) * 48 / menu.Width, (y - menu.Y) * 36 / menu.Height);
+                    px[(y * width + x) * 4] = px[(y * width + x) * 4 + 1] = px[(y * width + x) * 4 + 2] = v;
+                }
+            var said = new System.Collections.Generic.List<string>();
+            int changes = 0;
+            var watch = new GameWatch { Changed = () => changes++, Message = (text, seconds) => said.Add(text) };
+            watch.Start(0, true); // a window was picked
+            Assert.True(watch.Detecting);
+            long now = Run(watch, 0, 20, i => px, width, height, () => !watch.Detecting);
+            AssertNear(menu, watch.Crop, 4);
+            Assert.True(watch.FromMenu && !watch.Verified && watch.Reading);
+            Assert.Equal(new System.Drawing.Size(width, height), watch.FrameSize);
+            Assert.Contains(said, text => text.StartsWith("Game menu recognised"));
+            Assert.True(changes >= 2); // picked, found
+            Assert.Equal("Game found by its menu. The first score of a run will confirm it.", watch.Status(now, -1, false, "", ""));
+            Assert.Equal("game feed (from the game's menu)", watch.Label(-1));
+            // it goes on checking in the background until a score confirms it
+            Run(watch, now, 3, i => px, width, height);
+            Assert.True(watch.Busy && !watch.Detecting);
+        }
+
+        [Fact]
+        public void WatchConfirmsByTheScoreThenFindsAGameThatWasMoved()
+        {
+            const int width = 1280, height = 600;
+            var picture = new System.Drawing.Rectangle(20, 60, 617, 474);
+            var moved = new System.Drawing.Rectangle(560, 90, 617, 474);
+            var said = new System.Collections.Generic.List<string>();
+            // a crop from the menu, a few pixels out, not yet confirmed
+            var watch = new GameWatch
+            {
+                Crop = new System.Drawing.Rectangle(22, 61, 615, 473), FrameSize = new System.Drawing.Size(width, height),
+                FromMenu = true, Message = (text, seconds) => said.Add(text),
+            };
+            watch.Start(0, false);
+            var crop = watch.Crop;
+            long now = Run(watch, 0, 100, i => Frame(i, 0, "239800", picture, width, height), width, height, () => watch.Verified);
+            Assert.True(watch.Verified);
+            Assert.Equal(crop, watch.Crop); // it fits: kept as it is
+            Assert.Contains(said, text => text.StartsWith("Score found"));
+            Assert.Equal("Ready — score 239800.", watch.Status(now, 239800, false, "", ""));
+
+            // the score is read for a while (the app says so), the picture's
+            // height gets measured, and then nothing looks for anything
+            for (int i = 0; i < 150; i++, now += 100)
+            {
+                watch.ScoreSeen(now);
+                watch.Tick(now, new System.Drawing.Size(width, height));
+                if (watch.Busy)
+                    watch.Feed(Frame(i, 0, "239800", picture, width, height), width, height, width * 4, false,
+                        new System.Drawing.Rectangle(0, 0, width, height), now);
+            }
+            Assert.False(watch.Busy || watch.Lost);
+
+            // the game is moved inside the window: no score where the crop
+            // is, and after 15 s it is looked for again, and found
+            said.Clear();
+            now = Run(watch, now, 140, i => Frame(i, 0, "239800", moved, width, height), width, height);
+            Assert.False(watch.Lost && said.Count > 0);
+            now = Run(watch, now, 1500, i => Frame(i, 0, "239800", moved, width, height), width, height,
+                () => said.Count > 0 && !watch.Busy);
+            AssertNear(moved, watch.Crop, 10);
+            Assert.True(watch.Verified);
+            Assert.Contains(said, text => text.StartsWith("The game was found somewhere else"));
+        }
+
+        [Fact]
+        public void WatchLooksAgainWhenTheWindowChangesSize()
+        {
+            var said = new System.Collections.Generic.List<string>();
+            var watch = new GameWatch
+            {
+                Crop = new System.Drawing.Rectangle(100, 80, 900, 700), FrameSize = new System.Drawing.Size(1280, 960), Verified = true,
+                Message = (text, seconds) => said.Add(text),
+            };
+            watch.Start(0, false);
+            Assert.True(watch.Reading);
+            // the window is now 640x480, with the game at Picture
+            watch.Tick(0, new System.Drawing.Size(W, H));
+            Assert.True(watch.Detecting && !watch.Reading && !watch.Verified); // the old crop isn't read through
+            Assert.Contains(said, text => text.Contains("changed size"));
+            Assert.StartsWith("Looking for the game", watch.Status(0, -1, false, "", ""));
+            long now = Run(watch, 0, 200, i => Frame(i, 0, "239800", Picture, W, H), W, H, () => watch.Verified && !watch.Busy);
+            Assert.True(watch.Reading && watch.Verified);
+            AssertNear(Picture, watch.Crop, 10);
+            Assert.Equal(new System.Drawing.Size(W, H), watch.FrameSize);
+            // ... and not again for the same size
+            watch.Tick(now, new System.Drawing.Size(W, H));
+            Assert.False(watch.Detecting);
         }
 
         [Fact]

@@ -57,7 +57,7 @@ namespace BgaSpnfdr
         public long Score => _tracker.Score;
 
         /// <summary>When (Environment.TickCount64) the score was last read
-        /// where the crop says it is. The UI sets it when capture starts.</summary>
+        /// where the crop says it is; 0 before the first.</summary>
         public long LastScoreSeen;
 
         /// <summary>UI thread: whether the status text is being shown.</summary>

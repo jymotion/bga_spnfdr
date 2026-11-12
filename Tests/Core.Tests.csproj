@@ -9,6 +9,11 @@
     <RootNamespace>BgaSpnfdr.Tests</RootNamespace>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- Core/DigitReader reads through pointers (Vector4) -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
   <ItemGroup>
     <Compile Include="..\Core\*.cs" Link="Core\%(Filename)%(Extension)" />
   </ItemGroup>

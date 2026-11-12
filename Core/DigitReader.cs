@@ -1,7 +1,5 @@
 using System;
-#if !NETFRAMEWORK
 using System.Numerics;
-#endif
 
 namespace BgaSpnfdr
 {
@@ -159,6 +157,7 @@ namespace BgaSpnfdr
         };
 
         private static readonly float[] Templates = LoadTemplates(1);
+        private readonly float[] _window = new float[Pixels];
 
         /// <summary>One pixel of a digit's template, as brightness (0-255):
         /// the tests draw scores with it.</summary>
@@ -181,7 +180,6 @@ namespace BgaSpnfdr
         private int[] _prev = Array.Empty<int>();
         private float[] _colSum = Array.Empty<float>();
         private float[] _colSq = Array.Empty<float>();
-        private readonly float[] _window = new float[Pixels];
         private readonly char[] _text = new char[32];
 
         /// <summary>After Read: the strongest match (0..1) one digit step
@@ -345,33 +343,7 @@ namespace BgaSpnfdr
                         _window[k++] = band[row + c];
 
                 // templates are zero-mean, so the window's mean drops out
-                float best = float.MinValue;
-                int digit = 0;
-#if NETFRAMEWORK
-                // .NET Framework (the Windows build) has no in-box SIMD
-                for (int d = 0, o = 0; d < 10; d++, o += Pixels)
-                {
-                    float dot = 0;
-                    for (int i = 0; i < Pixels; i++)
-                        dot += Templates[o + i] * _window[i];
-#else
-                int lanes = Vector<float>.Count;
-                for (int d = 0, o = 0; d < 10; d++, o += Pixels)
-                {
-                    var acc = Vector<float>.Zero;
-                    int i = 0;
-                    for (; i <= Pixels - lanes; i += lanes)
-                        acc += new Vector<float>(Templates, o + i) * new Vector<float>(_window, i);
-                    float dot = Vector.Dot(acc, Vector<float>.One);
-                    for (; i < Pixels; i++)
-                        dot += Templates[o + i] * _window[i];
-#endif
-                    if (dot > best)
-                    {
-                        best = dot;
-                        digit = d;
-                    }
-                }
+                float best = Best(Templates, _window, Pixels, (float)sum, out int digit);
                 _best[x] = (float)(best / Math.Sqrt(spread));
                 _digit[x] = digit;
             }
@@ -431,25 +403,7 @@ namespace BgaSpnfdr
             float spread = sq - sum * sum / QuickPixels;
             if (spread < 1e-3f)
                 return false;
-            float best = float.MinValue;
-            for (int d = 0, o = 0; d < 10; d++, o += QuickPixels)
-            {
-#if NETFRAMEWORK
-                float dot = 0;
-                for (int i = 0; i < QuickPixels; i++)
-                    dot += QuickTemplates[o + i] * _quick[i];
-#else
-                int lanes = Vector<float>.Count, i = 0;
-                var acc = Vector<float>.Zero;
-                for (; i <= QuickPixels - lanes; i += lanes)
-                    acc += new Vector<float>(QuickTemplates, o + i) * new Vector<float>(_quick, i);
-                float dot = Vector.Dot(acc, Vector<float>.One);
-                for (; i < QuickPixels; i++)
-                    dot += QuickTemplates[o + i] * _quick[i];
-#endif
-                if (dot > best)
-                    best = dot;
-            }
+            float best = Best(QuickTemplates, _quick, QuickPixels, sum, out _);
             return best * best >= QuickMatch * QuickMatch * spread && best > 0;
         }
 
@@ -498,6 +452,118 @@ namespace BgaSpnfdr
             {
                 _colSum = new float[width];
                 _colSq = new float[width];
+            }
+        }
+
+        // ---------- a window against the ten templates ----------
+        //
+        // Nearly all of a read's time goes here: 2,520 products per window,
+        // some 230 windows per read. They are worked out with Vector4, the
+        // SIMD type that .NET Framework's 64-bit JIT (the Windows build) has
+        // built in as well as .NET 8 (the Linux build): 4 products at a
+        // time, into 4 sums side by side so that one doesn't wait for the
+        // other. Lane by lane these are ordinary single-precision
+        // operations in a fixed order, so both builds, and Tools/ReaderBench,
+        // get the same numbers on any PC.
+        //
+        // A 32-bit Windows has no SIMD in its JIT, and Vector4 would be
+        // slow there. The templates are whole numbers (0-15) and so are the
+        // pixels: there sum(t*w) is added up as whole numbers, which is
+        // exact in any order, and the mean taken off afterwards (Whole).
+
+        /// <summary>Whether Vector4 is used (64-bit) or whole numbers.</summary>
+        internal bool Wide = Environment.Is64BitProcess;
+
+        private static readonly Whole Shapes = new Whole(1), QuickShapes = new Whole(2);
+        private readonly byte[] _bytes = new byte[Pixels];
+
+        /// <summary>The best of the ten templates' matches with a window of
+        /// n pixels (which add up to sum), not yet divided by the window's
+        /// spread; and which digit it is.</summary>
+        private unsafe float Best(float[] templates, float[] window, int n, float sum, out int digit)
+        {
+            float best = float.MinValue;
+            digit = 0;
+            if (!Wide)
+            {
+                Whole shapes = n == Pixels ? Shapes : QuickShapes;
+                byte[] values = shapes.Values, bytes = _bytes;
+                for (int i = 0; i < n; i++)
+                    bytes[i] = (byte)window[i];
+                for (int d = 0, o = 0; d < 10; d++, o += n)
+                {
+                    int products = 0;
+                    for (int i = 0; i < n; i++)
+                        products += values[o + i] * bytes[i];
+                    float dot = (float)(((long)n * products - (long)shapes.Sums[d] * (long)sum) * shapes.Scales[d]);
+                    if (dot > best)
+                    {
+                        best = dot;
+                        digit = d;
+                    }
+                }
+                return best;
+            }
+            fixed (float* first = templates, w = window)
+            {
+                float* t = first;
+                for (int d = 0; d < 10; d++, t += n)
+                {
+                    Vector4 a = Vector4.Zero, b = Vector4.Zero, c = Vector4.Zero, e = Vector4.Zero;
+                    int i = 0;
+                    for (; i <= n - 16; i += 16)
+                    {
+                        a += *(Vector4*)(t + i) * *(Vector4*)(w + i);
+                        b += *(Vector4*)(t + i + 4) * *(Vector4*)(w + i + 4);
+                        c += *(Vector4*)(t + i + 8) * *(Vector4*)(w + i + 8);
+                        e += *(Vector4*)(t + i + 12) * *(Vector4*)(w + i + 12);
+                    }
+                    for (; i <= n - 4; i += 4)
+                        a += *(Vector4*)(t + i) * *(Vector4*)(w + i);
+                    a = (a + b) + (c + e);
+                    float dot = (a.X + a.Y) + (a.Z + a.W);
+                    for (; i < n; i++)
+                        dot += t[i] * w[i];
+                    if (dot > best)
+                    {
+                        best = dot;
+                        digit = d;
+                    }
+                }
+            }
+            return best;
+        }
+
+        /// <summary>The templates (every step-th row and column of them) as
+        /// the whole numbers they are stored as. A window's match with a
+        /// zero-mean, unit-length template is
+        /// (n * sum(t*w) - sum(t) * sum(w)) * Scales, with n pixels each.</summary>
+        private sealed class Whole
+        {
+            public readonly byte[] Values;   // 10 templates of n pixels
+            public readonly int[] Sums = new int[10];
+            public readonly double[] Scales = new double[10];
+
+            public Whole(int step)
+            {
+                int n = (BandHeight + step - 1) / step * ((GlyphWidth + step - 1) / step);
+                Values = new byte[10 * n];
+                for (int d = 0; d < 10; d++)
+                {
+                    int k = 0;
+                    long squares = 0;
+                    for (int y = 0; y < BandHeight; y += step)
+                        for (int c = 0; c < GlyphWidth; c += step)
+                        {
+                            int i = d * Pixels + y * GlyphWidth + c;
+                            byte v = (byte)(TemplateData[i >> 1] >> ((i & 1) == 0 ? 4 : 0) & 15);
+                            Values[d * n + k++] = v;
+                            Sums[d] += v;
+                            squares += v * v;
+                        }
+                    // n * (the template's length once its mean is taken off)
+                    Scales[d] = 1 / (n * Math.Sqrt(squares - (double)Sums[d] * Sums[d] / n));
+                }
             }
         }
 

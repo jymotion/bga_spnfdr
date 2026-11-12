@@ -121,7 +121,7 @@ zipped). Keep `<Version>` in both project files and `Version` in
 
 | Folder | What's in it | Compiled into |
 |---|---|---|
-| `Core/` | Platform-neutral logic: the digit reader, score band sampling, finding the game picture, safeguards, BattleTanx constants, route CSV loading | Every build |
+| `Core/` | Platform-neutral logic: the digit reader, score band sampling, finding the game picture and keeping the crop right (`GameWatch.cs`, which both apps' windows are driven by), safeguards, BattleTanx constants, route CSV loading | Every build |
 | `Windows/` | Windows app: window capture, WinForms UI | Windows build only |
 | `Linux/` | Linux app: screen-sharing portal + PipeWire capture, GTK 3 UI | Linux build only |
 | `Tests/` | Tests for `Core/` (`dotnet test Tests`) | Nothing shipped |
@@ -150,8 +150,14 @@ Measured on a full recorded run against a hand-verified answer key
 
 | | Scores confirmed | Wrong | Time per read |
 |---|---|---|---|
-| Windows and Linux (30 reads/s) | 109 | 0 | ~0.35 ms |
-| Windows on its PrintWindow fallback (10 reads/s) | 103 | 0 | ~0.35 ms |
+| Windows and Linux (30 reads/s) | 109 | 0 | ~0.25 ms |
+| Windows on its PrintWindow fallback (10 reads/s) | 103 | 0 | ~0.25 ms |
+
+Both apps match digits with the same arithmetic (`Vector4`, four products
+at a time, which .NET Framework's 64-bit JIT has built in as well as
+.NET 8), so the benchmark's numbers are those of either. On a 32-bit
+Windows, which has no SIMD, the same match is worked out in whole numbers
+(about three times slower; it reads the same on the reference run).
 
 The scores it misses were on screen for under ~0.2 s. Run side by side on
 Windows, it beat the Windows OCR this app used before (104 vs 89 scores,

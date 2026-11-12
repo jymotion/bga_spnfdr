@@ -20,6 +20,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Vector4, for matching digits four products at a time (part of .NET Framework) -->
+    <Reference Include="System.Numerics" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <!-- WinRT projections for Windows.Graphics.Capture. Build-time only:
          .NET Framework calls WinRT itself, so the exe stays a single file. -->

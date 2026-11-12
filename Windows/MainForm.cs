@@ -16,12 +16,6 @@ namespace BgaSpnfdr
         // Linux build): DigitReader.cs, ScoreBand.cs, ScoreTracker.cs,
         // BattleTanx.cs.
 
-        // ----- auto-crop -----
-        private const int AutoCropFramesInitial = 40; // ~4s after selecting a window
-        // A confirmed crop is looked into again when no score has been read
-        // through it for this long (ms): the game may have been moved inside
-        // the window, which doesn't change the window's size
-        private const int LostAfter = 15000;
         // Once nothing has looked at whole pictures for this many ticks of
         // the side tasks (~5 s), what is kept for them is let go of
         private const int ReleaseAfter = 50;
@@ -40,26 +34,16 @@ namespace BgaSpnfdr
         private Button _debugButton;
         private bool _debug;     // "Show Debug Info" is on: preview and reading details
         private Size _debugSize; // the setup window's size with them showing
-        private readonly System.Diagnostics.Stopwatch _sinceScore = System.Diagnostics.Stopwatch.StartNew(); // since a read last stood
+        private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew(); // the time, for _watch
         private Label _statusLabel;
         private Timer _timer;
 
         private IntPtr _targetWindow = IntPtr.Zero;
         private Bitmap _capture; // shared buffer owned by _source
 
-        private bool _cropFromMenu; // the crop is where the game's menu was recognised
-        private bool _lost;         // a confirmed crop, but no score read through it for a while
-        // The crop's height has been measured from the picture's top edge
-        // since the program started. Not saved: checked once per run of the
-        // program, so a wrong one can't stick.
-        private bool _heightMeasured;
-        private DateTime _measureNext; // when to try again to measure the picture's height
-
-        // Core/GameFinder at work: _detector while auto-crop runs (the user
-        // waits for it), _checker in the background while the crop hasn't
-        // been confirmed by a score (set up on the menu, there is none yet)
-        private GameFinder _detector, _checker;
-        private bool _reported;            // the finder at work has given a result already
+        // Where the game picture is, and looking for it (shared with the
+        // Linux app)
+        private readonly GameWatch _watch = new GameWatch();
         private byte[] _pixels = new byte[0]; // the newest whole picture, for the finders
         private int _picturesUnused;          // side-task ticks since anything looked at whole pictures
         private int _sinceSearch;             // ms since the saved window was last looked for
@@ -81,8 +65,6 @@ namespace BgaSpnfdr
         private const int StaleReadEvery = 3;
         private int _staleTicks;
 
-        private Size _sizeChecked; // capture-window size the crop was last checked against
-        private bool _cropStale;   // the window changed size: no reading until re-detected
 
         public MainForm()
         {
@@ -115,10 +97,14 @@ namespace BgaSpnfdr
                 _statusLabel.Text = "Now click the window showing the game feed…";
             _picker.Finished += OnWindowPicked;
 
+            _watch.Crop = _settings.Crop;
+            _watch.Verified = _settings.CropVerified;
+            _watch.FrameSize = _settings.CropWindowSize;
+            _watch.Changed = OnCropChanged;
+            _watch.Message = (text, seconds) => ShowStickyStatus(text, seconds);
             FindSavedWindow();
-            if (_targetWindow != IntPtr.Zero && _settings.Crop.IsEmpty)
-                StartAutoCrop(AutoCropFramesInitial); // window known but never cropped
-            else if (_targetWindow == IntPtr.Zero && _settings.WindowTitle.Length > 0)
+            _watch.Start(_clock.ElapsedMilliseconds, false); // (with no crop yet, the game is looked for)
+            if (_targetWindow == IntPtr.Zero && _settings.WindowTitle.Length > 0)
                 _statusLabel.Text = "Waiting for last time's window to open — or select another."; // (CaptureFrame looks)
 
             // restore the notes window as it was last time
@@ -253,91 +239,21 @@ namespace BgaSpnfdr
                 return;
             }
             _targetWindow = target;
-            _settings.CropVerified = false; // the crop was for another window
-            _sinceScore.Restart();
             _settings.WindowTitle = Native.GetWindowTitle(target);
+            // the crop was for another window: the game picture is looked for
+            _watch.Start(_clock.ElapsedMilliseconds, true);
             SaveSettings();
             UpdateButtonLabels();
-            StartAutoCrop(AutoCropFramesInitial); // pre-select the game picture
         }
 
-        // ---------- automatic game-feed detection ----------
+        // ---------- the game picture (Core/GameWatch) ----------
 
-        private void StartAutoCrop(int frameBudget)
+        /// <summary>The crop has changed: saved.</summary>
+        private void OnCropChanged()
         {
-            _detector = GameFinder.Detect(frameBudget);
-            _checker = null;
-            _reported = false;
-        }
-
-        /// <summary>Hands the newest whole picture to the finder at work.</summary>
-        private void FeedFinder()
-        {
-            GameFinder finder = _detector ?? _checker;
-            var client = WindowCapture.ClientArea(_targetWindow, _capture.Size);
-            byte[] px = Pixels(out int stride);
-            bool finished = finder.Feed(px, _capture.Width, _capture.Height, stride, false, client);
-            if (finder.MenuSeen)
-                _cropFromMenu = true; // the menu is showing, right where the crop is
-            if (!finished)
-                return;
-
-            bool first = !_reported;
-            _reported = true;
-            if (finder == _detector)
-                _cropStale = false; // re-detected, or (if that failed) back to the crop there was
-            if (finder.Recognized)
-            {
-                // the game's menu is showing: that is where the picture is
-                _heightMeasured = true; // the whole picture was matched
-                SetCrop(finder.Result, false, fromMenu: true);
-                ShowStickyStatus("Game menu recognised — the crop is set to it. The first score will confirm it.",
-                    seconds: 10);
-            }
-            else if (finder == _detector && finder.Result.IsEmpty)
-                ShowStickyStatus("Couldn't find the game yet — it is found when its menu or a score is on screen.",
-                    seconds: 10);
-            else if (finder == _detector)
-            {
-                // no menu and perhaps no score to go by: the box is from
-                // what moves and the picture's edges
-                _heightMeasured = finder.Verified && finder.Ruled;
-                SetCrop(finder.Result, finder.Verified);
-                if (first)
-                    ShowStickyStatus(finder.Verified
-                        ? "Game found and confirmed by the score."
-                        : "Game found by what moves, which other moving things can fool. Its GAME SETUP menu or " +
-                          "the first score of a run will set it right.",
-                        seconds: 12);
-            }
-            else if (finder.Verified)
-            {
-                bool confirmed = _settings.CropVerified, moved = finder.Result != _settings.Crop;
-                bool ruled = finder.Ruled || (!moved && _heightMeasured);
-                if (moved || !confirmed || ruled != _heightMeasured)
-                {
-                    _heightMeasured = ruled;
-                    SetCrop(finder.Result, true, _cropFromMenu && !moved);
-                }
-                _sinceScore.Restart();
-                _measureNext = DateTime.Now.AddSeconds(10);
-                if (confirmed && moved && _lost)
-                    ShowStickyStatus("The game was found somewhere else in the window — now reading it there.", seconds: 8);
-                else if (first && !confirmed)
-                    ShowStickyStatus("Score found — the game's place in the window is confirmed.", seconds: 8);
-            }
-            // a finder that has just found the score goes on to steady its
-            // result; one that hasn't is started afresh by CaptureFrame
-            if (!finder.Refining)
-                _detector = _checker = null;
-        }
-
-        private void SetCrop(Rectangle crop, bool verified, bool fromMenu = false)
-        {
-            _cropFromMenu = fromMenu;
-            _settings.Crop = crop;
-            _settings.CropVerified = verified;
-            _settings.CropWindowSize = _sizeChecked = _source.Size;
+            _settings.Crop = _watch.Crop;
+            _settings.CropVerified = _watch.Verified;
+            _settings.CropWindowSize = _watch.FrameSize;
             SaveSettings();
             _previewBox.Invalidate();
         }
@@ -465,10 +381,8 @@ namespace BgaSpnfdr
                 FindSavedWindow();
                 if (_targetWindow != before)
                 {
-                    _sinceScore.Restart();
+                    _watch.Start(_clock.ElapsedMilliseconds, false);
                     UpdateButtonLabels();
-                    if (_settings.Crop.IsEmpty)
-                        StartAutoCrop(AutoCropFramesInitial);
                 }
             }
             if (_targetWindow == IntPtr.Zero)
@@ -479,7 +393,7 @@ namespace BgaSpnfdr
             // picture, which Windows.Graphics.Capture then copies back too.
             bool sideTasks = _timer.Interval >= 100 || ++_reads % 3 == 0;
             bool fullFrame = sideTasks
-                && (_detector != null || _checker != null || (_debug && Visible && WindowState != FormWindowState.Minimized));
+                && (_watch.Busy || (_debug && Visible && WindowState != FormWindowState.Minimized));
             bool ok = _source.Capture(_targetWindow, _settings.Crop, fullFrame);
             // 30 reads a second with Windows.Graphics.Capture; PrintWindow
             // (its fallback) costs much more per read, so that reads 10
@@ -494,11 +408,13 @@ namespace BgaSpnfdr
             }
             if (_source.Frame != null)
                 _capture = _source.Frame;
-            CheckWindowSize();
+            // (a window that has changed size, a crop to be checked: see GameWatch)
+            long now = _clock.ElapsedMilliseconds;
+            _watch.Tick(now, _source.Size);
             _tracker.WantStatus = Visible && _debug; // nobody sees it otherwise
             if (_source.Fresh)
                 _staleTicks = 0;
-            if (!_cropStale && (_source.Fresh || ++_staleTicks % StaleReadEvery == 0))
+            if (_watch.Reading && (_source.Fresh || ++_staleTicks % StaleReadEvery == 0))
                 ReadScore();
             if (!sideTasks)
                 return;
@@ -506,34 +422,19 @@ namespace BgaSpnfdr
             if (_previewBox.Visible && Visible)
                 _previewBox.Invalidate();
 
-            // a crop no score has confirmed yet is checked until one does
-            // (also with no crop at all: the menu or a score will give one),
-            // and a confirmed one when no score has been read through it for
-            // a while (a menu, or the game was moved inside the window)
-            bool unconfirmed = !_settings.CropVerified;
-            bool lost = _lost = !unconfirmed && _sinceScore.ElapsedMilliseconds > LostAfter;
-            // ... or its height hasn't been measured yet (the picture's top
-            // edge doesn't show in a dark scene): tried again every 10 s
-            bool measure = !unconfirmed && !_heightMeasured && DateTime.Now >= _measureNext;
-            lost |= measure;
-            if (_detector == null && !_cropStale)
+            // the newest whole picture, for the finder at work
+            if (_watch.Busy && _capture != null)
             {
-                if (_checker == null && (unconfirmed || lost))
-                {
-                    _checker = GameFinder.Check(_settings.Crop, _settings.CropVerified || _cropFromMenu);
-                    _reported = false;
-                }
-                else if (_checker != null && !unconfirmed && !lost && !_checker.Refining)
-                    _checker = null; // the score is being read again
+                byte[] px = Pixels(out int stride);
+                _watch.Feed(px, _capture.Width, _capture.Height, stride, false,
+                    WindowCapture.ClientArea(_targetWindow, _capture.Size), now);
             }
-            if ((_detector != null || _checker != null) && _capture != null)
-                FeedFinder();
 
             // Once the score is being read, nothing looks at whole pictures:
             // 5 s on, what is kept for them (about 30 MB at 1080p) goes back
             // to the system. The arrays only do when the collector is told
             // to run: nothing else here makes it.
-            if (_detector != null || _checker != null || (_debug && Visible && WindowState != FormWindowState.Minimized))
+            if (_watch.Busy || (_debug && Visible && WindowState != FormWindowState.Minimized))
                 _picturesUnused = 0;
             else if (_picturesUnused < ReleaseAfter && ++_picturesUnused == ReleaseAfter)
             {
@@ -546,64 +447,12 @@ namespace BgaSpnfdr
             if (!Visible || _picker.Active)
                 return; // (while picking a window, the status bar shows the pick prompt)
 
-            unconfirmed = !_settings.CropVerified;
-            string text;
-            if (_detector != null)
-            {
-                int seconds = (_detector.FramesLeft * 100 + 999) / 1000; // fed ~10 frames a second
-                text = seconds > 0 ? $"Looking for the game… {seconds}s" : "Looking for the game… checking it against the score";
-            }
-            else if (DateTime.Now < _stickyUntil)
-                text = _stickyStatus;
-            else
-            {
-                // what the user needs to know ...
-                long score = _tracker.Score;
-                text = _lost ? "Ready — no score on screen; checking the game is still where it was."
-                    : _settings.Crop.IsEmpty ? "Looking for the game: it is found when its GAME SETUP menu or a score is on screen."
-                    : unconfirmed && _cropFromMenu ? "Game found by its menu. The first score of a run will confirm it."
-                    : unconfirmed ? "Game not confirmed yet: go to its GAME SETUP menu, or start a run."
-                    : score >= 0 ? $"Ready — score {score}."
-                    : "Ready — waiting for a score.";
-                // ... and, asked for, what the reader is doing
-                if (_debug)
-                {
-                    Rectangle c = _settings.Crop;
-                    long since = _sinceScore.ElapsedMilliseconds / 1000;
-                    text = _tracker.Status + (since >= 1 ? $" ({since} s)" : "") + $"  ·  crop {c.X},{c.Y} {c.Width}x{c.Height} "
-                        + (_lost ? "(no score for 15 s: checking where the game is)" : _settings.CropVerified ? (_tracker.Score >= 0 ? "(confirmed by the score)" : "(confirmed last time; no score seen yet this time)")
-                            : _cropFromMenu ? "(from the menu)" : "(not confirmed)")
-                        + $"  ·  window {_source.Size.Width}x{_source.Size.Height}, "
-                        + (_source.UsedGraphicsCapture ? "Windows.Graphics.Capture" : "PrintWindow")
-                        + (_source.Error != null ? " (" + _source.Error + ")" : "")
-                        + (_checker == null || _lost ? "" : unconfirmed ? "  ·  looking for the game" : "  ·  measuring the picture's height");
-                }
-            }
-            _statusLabel.Text = text;
-        }
-
-        /// <summary>The crop is in capture-window pixels, so it no longer fits
-        /// once that window changes size: detect the game feed again (once
-        /// per size, so a failed detection doesn't loop).</summary>
-        private void CheckWindowSize()
-        {
-            Size size = _source.Size;
-            if (size == _sizeChecked || _detector != null || _settings.Crop.IsEmpty)
-                return;
-            _sizeChecked = size;
-            if (_settings.CropWindowSize.IsEmpty)
-            {
-                // a crop saved by an earlier version: take it to fit this size
-                _settings.CropWindowSize = size;
-                SaveSettings();
-            }
-            else if (_settings.CropWindowSize != size)
-            {
-                _cropStale = true;
-                _settings.CropVerified = false; // it was confirmed for the other size
-                ShowStickyStatus("The capture window changed size — re-detecting the game feed.");
-                StartAutoCrop(AutoCropFramesInitial);
-            }
+            _statusLabel.Text = !_watch.Detecting && DateTime.Now < _stickyUntil
+                ? _stickyStatus
+                : _watch.Status(now, _tracker.Score, _debug, _tracker.Status,
+                    $"window {_source.Size.Width}x{_source.Size.Height}, "
+                    + (_source.UsedGraphicsCapture ? "Windows.Graphics.Capture" : "PrintWindow")
+                    + (_source.Error != null ? " (" + _source.Error + ")" : ""));
         }
 
         /// <summary>Reads 30 (fast) or 10 times a second, with the matching
@@ -634,7 +483,7 @@ namespace BgaSpnfdr
         // ---------- reading the score ----------
 
         /// <summary>Reads the score from the newest capture with the digit
-        /// reader and feeds the safeguards (Core/ScoreTracker). About 1 ms.</summary>
+        /// reader and feeds the safeguards (Core/ScoreTracker).</summary>
         private void ReadScore()
         {
             var crop = _settings.Crop;
@@ -653,14 +502,11 @@ namespace BgaSpnfdr
             if (note != null)
                 _notesForm.SetNote(note);
             if (_tracker.ReadStands)
-                _sinceScore.Restart();
-            // the score read starting left of the crop's edge: the crop
-            // belongs further left (ScoreBand.Recenter)
-            if (_tracker.ReadStands && _detector == null)
             {
-                Rectangle moved = ScoreBand.Recenter(crop, _reader.FoundFirst, _reader.FoundOffset);
-                if (moved != crop)
-                    SetCrop(moved, _settings.CropVerified, _cropFromMenu);
+                _watch.ScoreSeen(_clock.ElapsedMilliseconds);
+                // the score read starting left of the crop's edge: the crop
+                // belongs further left (ScoreBand.Recenter)
+                _watch.MoveCrop(ScoreBand.Recenter(crop, _reader.FoundFirst, _reader.FoundOffset), _source.Size);
             }
         }
 
@@ -719,9 +565,7 @@ namespace BgaSpnfdr
                 using (var pen = new Pen(Color.Red, 2))
                     e.Graphics.DrawRectangle(pen, r);
                 TextRenderer.DrawText(e.Graphics,
-                    _lost ? "game feed (no score for a while: checking it is still here)"
-                        : _settings.CropVerified ? (_tracker.Score >= 0 ? "game feed (confirmed by the score)" : "game feed (as confirmed last time; no score seen yet)")
-                        : _cropFromMenu ? "game feed (from the game's menu)" : "game feed (not confirmed yet)",
+                    _watch.Label(_tracker.Score),
                     Font, new Point(r.X + 4, r.Y + 3), Color.Red);
 
                 var scoreDisp = ImageToPreview(ScoreRegion());
