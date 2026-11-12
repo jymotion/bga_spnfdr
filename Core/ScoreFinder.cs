@@ -314,6 +314,45 @@ namespace BgaSpnfdr
             }
         }
 
+        // ---------- the score, or another number? ----------
+
+        // The game shows a second number in the score's font on the score's
+        // row: the ammunition left, near the picture's right edge. It can be
+        // a multiple of 25 as well, and is 100 at the start of a run, while
+        // the score is a lone 0 that can't be searched for. The score is
+        // always the one further left: it ends in the picture's left third,
+        // and the ammunition starts 52 to 84% of the picture's width right
+        // of where the score starts or ends (over the levels of the
+        // reference run).
+        private const double OtherNearest = 0.45, OtherFarthest = 0.90;
+
+        /// <summary>What a (tuned) find has further left on its row, where
+        /// the score would be if the find were the ammunition: 0 nothing,
+        /// 1 a lone 0 (the score at the start of a run: too short to go
+        /// by), 2 a number that may be the score (other, still to be
+        /// tuned). Anything but 0 means the find isn't the score. If the
+        /// find is the score, the place looked at is at least 15% of the
+        /// picture's width outside the picture.</summary>
+        public int LeftOf(Hit hit, int areaLeft, out Hit other)
+        {
+            other = hit;
+            double w = W * hit.Sx;
+            double x0 = Math.Max(areaLeft, hit.Left - OtherFarthest * w), y0 = hit.Top - hit.Sy;
+            string text = Look(x0, y0, hit.Sx, hit.Sy, (int)((hit.Left - OtherNearest * w - x0) / hit.Sx), DigitReader.BandHeight + 2);
+            if (!Plausible(text, _reader.FoundGain, 1, RoughMatch))
+                return 0;
+            other = new Hit
+            {
+                Sx = hit.Sx, Sy = hit.Sy,
+                Top = y0 + _reader.FoundOffset * hit.Sy,
+                Left = x0 + _reader.FoundFirst * hit.Sx,
+                Right = x0 + (_reader.FoundLast + DigitReader.GlyphWidth) * hit.Sx,
+                Gain = _reader.FoundGain,
+                Text = text,
+            };
+            return text.Length >= 2 ? 2 : 1;
+        }
+
         // ---------- from the score to the picture ----------
 
         /// <summary>The frame columns the picture's left edge can be at,

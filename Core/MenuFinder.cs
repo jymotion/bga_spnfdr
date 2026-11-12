@@ -86,7 +86,14 @@ namespace BgaSpnfdr
         // zero-mean, unit-length copies (the left-out part is 0 in both)
         private static readonly float[] Fine = Load(1), Coarse = Load(Block);
 
-        private uint[] _sums = new uint[0]; // brightness summed from the area's top left corner
+        // brightness summed from the area's top left corner. One for all
+        // finders (each thread's): it is as big as the frame, 8 MB at
+        // 1080p, and Core/GameFinder makes a new finder for every check
+        [ThreadStatic] private static uint[] _sums;
+
+        /// <summary>Lets go of that (the calling thread's): the apps call
+        /// it once the score is being read and nothing is looked for.</summary>
+        internal static void Release() => _sums = null;
         private int _width, _height;        // the area's size
         private readonly float[] _cells = new float[Across * Down];
 
@@ -224,7 +231,7 @@ namespace BgaSpnfdr
         {
             _width = area.Width; _height = area.Height;
             int n = (_width + 1) * (_height + 1);
-            if (_sums.Length < n)
+            if (_sums == null || _sums.Length < n)
                 _sums = new uint[n];
             int ri = rgbOrder ? 0 : 2, bi = rgbOrder ? 2 : 0, row = _width + 1;
             for (int x = 0; x <= _width; x++)

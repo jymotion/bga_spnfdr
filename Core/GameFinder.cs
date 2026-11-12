@@ -78,7 +78,8 @@ namespace BgaSpnfdr
         private readonly MenuFinder _menu = new MenuFinder();
         private Rectangle _menuAt;   // where the menu was last recognised (to be seen twice)
         private int _fed;            // frames fed
-        private bool _menuReported;  // Check: the menu has been recognised once
+        private int _menuNext = 1;   // the frame (by _fed) to look for the menu on next
+        private bool _menuLooked;    // it has been looked for at least once
 
         // What is seen left of a find over its samples, for the picture's
         // left edge (Watch, LeftEdge): rows x columns of the frame
@@ -91,6 +92,8 @@ namespace BgaSpnfdr
         private bool _rgbOrder;
         private int _sampleTries, _sinceSample;
         private byte[] _glance;  // a coarse copy of the last frame checked
+        private bool _changed = true; // the picture has changed since the crop was last tried
+        private int _nearSkipped;     // tries of the crop left out because it hadn't
         private bool _reported;  // Result has been handed out once already
         private int _frame;      // frames fed while checking
 
@@ -101,6 +104,10 @@ namespace BgaSpnfdr
             _frameBudget = frames;
             _crop = crop;
             _stage = detect ? Stage.Motion : Stage.Near;
+            // a crop from the menu or an earlier score isn't in a hurry to
+            // have the menu looked for (but see Feed: a still picture)
+            if (trusted)
+                _menuNext = MenuEveryCheck;
         }
 
         /// <summary>Finds the picture by what moves over this many frames.</summary>
@@ -140,6 +147,15 @@ namespace BgaSpnfdr
         /// being checked is (which Feed doesn't stop for).</summary>
         public bool MenuSeen;
 
+        /// <summary>Check: ... and was still there at the last look. While
+        /// it is, the game is known to be at the crop with no score to find,
+        /// so nothing is searched for but a score there.</summary>
+        public bool MenuHere;
+
+        /// <summary>How often the menu has been looked for (each look goes
+        /// over the whole frame, ~50 ms at 1080p): for the tests.</summary>
+        internal int MenuLooks;
+
         /// <summary>Takes one frame (4 bytes per pixel, R and B order given
         /// by rgbOrder); area is the part of it that can hold the game (a
         /// window's client area, or all of it). True when finished.</summary>
@@ -151,21 +167,24 @@ namespace BgaSpnfdr
                 Result = _crop;
                 return true;
             }
-            if (_rowMax == null || area != _area || width != _width || height != _height)
+            if (_width == 0 || area != _area || width != _width || height != _height)
             {
-                if (_rowMax != null && !_detect)
+                if (_width != 0 && !_detect)
                 {
                     Result = _crop; // the frame changed under a check: the caller starts over
                     return true;
                 }
                 _area = area; _width = width; _height = height; // (re)start if the frame changed
-                _rowMax = new int[area.Height];
-                _colMax = new int[area.Width];
-                _gridW = (area.Width + GridStep - 1) / GridStep;
-                _gridH = (area.Height + GridStep - 1) / GridStep;
-                _prevLuma = null;
-                _motionHits = new byte[_gridW * _gridH];
-                _maxLuma = new byte[_gridW * _gridH];
+                if (_detect)
+                {
+                    _rowMax = new int[area.Height];
+                    _colMax = new int[area.Width];
+                    _gridW = (area.Width + GridStep - 1) / GridStep;
+                    _gridH = (area.Height + GridStep - 1) / GridStep;
+                    _prevLuma = null;
+                    _motionHits = new byte[_gridW * _gridH];
+                    _maxLuma = new byte[_gridW * _gridH];
+                }
                 _framesLeft = _frameBudget;
                 _plan.Clear();
                 _next = 0;
@@ -185,7 +204,7 @@ namespace BgaSpnfdr
             {
                 // the game's menu, if that is what's showing, says exactly
                 // where the picture is, at once
-                if (Menu(MenuEveryDetect))
+                if (Menu(_fed >= _menuNext, MenuEveryDetect))
                     return true;
                 Accumulate(px, stride, rgbOrder);
                 if (--_framesLeft > 0)
@@ -209,21 +228,33 @@ namespace BgaSpnfdr
                 return true; // Detect, its boxes tried: the first guess stands
 
             // Check: the menu now and then (the program may have been set up
-            // before the game was on it) ...
-            if (Menu(_menuReported ? 4 * MenuEveryCheck : MenuEveryCheck))
+            // before the game was on it): every 3 s until it has been seen
+            // where the crop is, then every 12 s; and at once if the picture
+            // is holding still, which the menu does ...
+            int points = Changed(px, stride, rgbOrder);
+            bool changed = points > 0, still = points < 3; // (one or two is a capture's noise)
+            _changed |= changed;
+            if (Menu(_fed >= _menuNext || (!_menuLooked && still && _fed >= 2), MenuSeen ? 4 * MenuEveryCheck : MenuEveryCheck))
             {
-                _menuReported = true; // from now on only now and then
-                MenuSeen = Math.Abs(Result.X - _crop.X) <= 3 && Math.Abs(Result.Y - _crop.Y) <= 3
+                MenuHere = Math.Abs(Result.X - _crop.X) <= 3 && Math.Abs(Result.Y - _crop.Y) <= 3
                     && Math.Abs(Result.Right - _crop.Right) <= 3 && Math.Abs(Result.Bottom - _crop.Bottom) <= 3;
-                if (!MenuSeen)
+                if (!MenuHere)
                     return true; // the crop belongs there instead
+                MenuSeen = true;
                 Result = Rectangle.Empty;
                 Recognized = false;
             }
             // ... the crop itself about once a second, so a score that comes
-            // up is caught promptly; the wider search in between
+            // up is caught promptly ...
             if (_frame++ % NearEvery == 0)
             {
+                // (if nothing on screen has changed since the last try, no
+                // score will have come up: then only every 5th time, in
+                // case a score ever does come up that quietly)
+                if (!_changed && ++_nearSkipped < 5)
+                    return false;
+                _changed = false;
+                _nearSkipped = 0;
                 var near = new List<ScoreFinder.Probe>();
                 ScoreFinder.PlanNear(_crop, 0.06, 2, int.MaxValue, near);
                 foreach (ScoreFinder.Probe probe in near)
@@ -231,27 +262,33 @@ namespace BgaSpnfdr
                         return false;
                 return false;
             }
-            // nothing on screen changes (the menu): no score will have come up
-            if (Changed(px, stride, rgbOrder))
+            // ... and the wider search in between, unless nothing at all
+            // has changed or the menu is showing right where the crop is
+            if (changed && !MenuHere)
                 Look(CheckMilliseconds);
             return false;
         }
 
-        /// <summary>Looks for the game's menu every so many frames, and on
-        /// the frame after it was seen: twice in the same place and it is
-        /// believed (true, with Result and Recognized).</summary>
-        private bool Menu(int every)
+        /// <summary>Looks for the game's menu when due, and on the frame
+        /// after it was seen: twice in the same place and it is believed
+        /// (true, with Result and Recognized). The next look is then due
+        /// 'every' frames on.</summary>
+        private bool Menu(bool due, int every)
         {
-            if (_menuAt.IsEmpty && _fed % every != 1)
+            if (_menuAt.IsEmpty && !due)
                 return false;
+            _menuLooked = true;
+            MenuLooks++;
+            _menuNext = _fed + every;
             if (!_menu.Find(_px, _stride, _rgbOrder, _area, out Rectangle at))
             {
                 _menuAt = Rectangle.Empty;
+                MenuHere = false;
                 return false;
             }
             bool again = !_menuAt.IsEmpty && Math.Abs(at.X - _menuAt.X) <= 3 && Math.Abs(at.Y - _menuAt.Y) <= 3
                 && Math.Abs(at.Right - _menuAt.Right) <= 3 && Math.Abs(at.Bottom - _menuAt.Bottom) <= 3;
-            _menuAt = at;
+            _menuAt = again ? Rectangle.Empty : at; // believed: next looked for when due again
             if (!again)
                 return false;
             Result = at;
@@ -262,22 +299,22 @@ namespace BgaSpnfdr
             return true;
         }
 
-        /// <summary>Whether this frame differs from the last one fed, going
-        /// by a coarse grid of its pixels.</summary>
-        private bool Changed(byte[] px, int stride, bool rgbOrder)
+        /// <summary>How much this frame differs from the last one fed: at
+        /// how many of a coarse grid of its pixels (48 x 27 of them).</summary>
+        private int Changed(byte[] px, int stride, bool rgbOrder)
         {
             const int across = 48, down = 27;
             if (_glance == null)
                 _glance = new byte[across * down];
             int ri = rgbOrder ? 0 : 2, bi = rgbOrder ? 2 : 0;
-            bool changed = false;
+            int changed = 0;
             for (int j = 0; j < down; j++)
                 for (int i = 0; i < across; i++)
                 {
                     int x = _area.X + (2 * i + 1) * _area.Width / (2 * across), y = _area.Y + (2 * j + 1) * _area.Height / (2 * down);
                     byte luma = (byte)ScoreBand.Luma(px, stride, 0, _height - 1, _width, x, y, ri, bi);
                     if (Math.Abs(luma - _glance[j * across + i]) > MotionDelta)
-                        changed = true;
+                        changed++;
                     _glance[j * across + i] = luma;
                 }
             return changed;
@@ -312,7 +349,20 @@ namespace BgaSpnfdr
         {
             if (!_finder.Run(probe, out ScoreFinder.Hit hit) || !_finder.Tune(ref hit, probe.MinDigits))
                 return false;
-            if (probe.Hint.IsEmpty)
+            // The score is the leftmost number on its row: with another one
+            // further left, this is the ammunition left (ScoreFinder.LeftOf)
+            // and that one the score, if it is long enough to go by
+            switch (_finder.LeftOf(hit, _area.Left, out ScoreFinder.Hit other))
+            {
+                case 1:
+                    return false;
+                case 2:
+                    if (!_finder.Tune(ref other, 2))
+                        return false;
+                    hit = other; // (with no hint: it wasn't looked for there)
+                    break;
+            }
+            if (hit.Hint.IsEmpty)
             {
                 // found with nothing to say it should be there: a 2-digit
                 // score has to match very well, and the picture it implies
@@ -365,6 +415,17 @@ namespace BgaSpnfdr
                 return false;
             _sinceSample = 0;
             ScoreFinder.Hit first = _finds[0];
+            // a number has shown up further left on its row: it isn't the
+            // score (as in Try)
+            if (_finder.LeftOf(first, _area.Left, out _) != 0)
+            {
+                _finds.Clear();
+                _findTops.Clear();
+                if (!_reported)
+                    return false; // carry on looking
+                Refining = false; // (already believed: the caller starts over)
+                return true;
+            }
             var again = new ScoreFinder.Probe
             {
                 Sx = first.Sx, Sy = first.Sy,

@@ -8,7 +8,7 @@
     <AssemblyName>bga_spnfdr</AssemblyName>
     <RootNamespace>BgaSpnfdr</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.3.0</Version>
+    <Version>1.4.0</Version>
     <Company>bga_spnfdr</Company>
     <Product>bga_spnfdr</Product>
     <Description>Displays BattleTanx: Global Assault route notes based on the on-screen score</Description>

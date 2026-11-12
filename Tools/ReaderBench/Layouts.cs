@@ -58,6 +58,13 @@ namespace BgaSpnfdr.Bench
             var projector = new RectangleF(271.5f, 4.5f, 1388.25f, 1066.5f);
             var wide = new RectangleF(42, 4.5f, 1851, 1066.5f);
             var inStream = new RectangleF(68, 64, 1234, 948);
+            // The game smaller in the layout, with room to its right: there
+            // the frame has space for a picture whose "score" would be the
+            // ammunition left (the same digits on the score's row, 100 as
+            // the run starts with a score of 0), which was once taken for it
+            string small = $"{Backdrop};[0:v]fps=10,scale=960:720[g];[bg][g]overlay=40:60[x1];{Beside}";
+            string smallMenu = $"{Backdrop};{Menu},scale=960:720[g];[bg][g]overlay=40:60[x1];{Beside}";
+            var inSmall = new RectangleF(61, 63, 925.5f, 711);
             var inWindow = new RectangleF(601, 112.25f, 925.5f, 533.25f);
             string window = $"{Window}[0:v]fps=10,scale=960:540[g];{InWindow}";
 
@@ -66,6 +73,7 @@ namespace BgaSpnfdr.Bench
             One("projector, black around (1080p)", 1920, 1080, projector, null, 500, menu + ",scale=1440:1080,pad=1920:1080:240:0:black\"");
             One("stretched to 16:9 (1080p)", 1920, 1080, wide, null, 500, menu + ",scale=1920:1080\"");
             One("stream layout", 1920, 1080, inStream, null, 500, $"-i \"{part}\" -filter_complex \"{streamMenu}\"");
+            One("stream layout, the game smaller", 1920, 1080, inSmall, null, 500, $"-i \"{part}\" -filter_complex \"{smallMenu}\"");
             One("capturing program's own window", 1920, 1080, inWindow, null, 500,
                 $"-i \"{part}\" -filter_complex \"{Window}{Menu},scale=960:540[g];{InWindow}\"");
             Console.WriteLine("-- set up during play");
@@ -83,6 +91,9 @@ namespace BgaSpnfdr.Bench
             foreach (string box in new[] { "30,50,1300,980", "120,100,1150,880", "60,60,1700,960", "0,0,1920,1080" })
                 One("crop " + box, 1920, 1080, inStream, box, 600, At(147) + $" -filter_complex \"{stream}\"");
             One("whole window (capturing program's)", 1920, 1080, inWindow, "0,0,1920,1080", 600, At(147) + $" -filter_complex \"{window}\"");
+            Console.WriteLine("-- as the run starts (score 0, ammunition 100), the game smaller in a stream layout (the picture is 61,63 926x711)");
+            foreach (string box in new[] { "0,0,1920,1080", "61,63,926,711", "583,63,926,711" })
+                One("crop " + box, 1920, 1080, inSmall, box, 600, At(5) + $" -filter_complex \"{small}\"");
             Console.WriteLine("-- no game in the frame at all: must stay unconfirmed");
             One("webcam, animation and timer only", 1920, 1080, inStream, null, 600,
                 $"-f lavfi -i \"{Backdrop};mandelbrot=s=1280x960:r=10[g];[bg][g]overlay=40:60[x1];{Beside}\"");

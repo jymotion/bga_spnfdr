@@ -13,7 +13,7 @@
     <RootNamespace>BgaSpnfdr</RootNamespace>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <Version>1.2.0</Version>
+    <Version>1.4.0</Version>
     <!-- reads every frame (~30/s): ScoreTracker needs 3 matching reads, not 2 -->
     <DefineConstants>$(DefineConstants);READ_EVERY_FRAME</DefineConstants>
 

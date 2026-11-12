@@ -4,6 +4,19 @@ Displays route notes for **BattleTanx: Global Assault** (N64) speedruns based
 on the player's current score, read live from the capture feed. Runs on
 Windows and Linux.
 
+## Getting it
+
+Each program is one file; there is nothing to install or unzip.
+
+- **Windows:** `bga_spnfdr.exe`. Run it.
+- **Linux:** `bga_spnfdr-linux-x64`. Allow it to run once
+  (`chmod +x bga_spnfdr-linux-x64`, or tick "allow executing as a program"
+  in the file's properties), then run it.
+
+Both are on the repository's **Releases** page. The newest build of any
+branch is also on that build's page (**Actions** tab, the run, *Artifacts*)
+for people signed in to GitHub.
+
 ## Using it
 
 1. **Select Capture Window**, then pick the window showing the N64 feed
@@ -11,7 +24,9 @@ Windows and Linux.
    your desktop's screen-sharing prompt opens (the same one OBS and browsers
    use); pick the window there. Linux remembers the choice, so later
    launches reconnect without asking (where the desktop supports it, e.g.
-   KDE Plasma and GNOME). On Windows 10, Windows draws a yellow border
+   KDE Plasma and GNOME). Windows remembers the window by its title and
+   picks it up again by itself, also when it is opened after the program
+   or closed and opened again. On Windows 10, Windows draws a yellow border
    around the window while it's being captured (Windows 11 lets the app
    turn it off).
 2. The program **finds the game picture** in the window by itself. Do this
@@ -94,6 +109,14 @@ For testing without a desktop's prompt, `BGA_SPNFDR_PIPEWIRE_NODE=<id>`
 makes it read straight from a node on your own PipeWire (e.g. a GStreamer
 `pipewiresink` playing a recording).
 
+### Releases
+
+`.github/workflows/build.yml` builds both programs on every push. Pushing a
+tag that starts with `v` (e.g. `git tag v1.4.0 && git push origin v1.4.0`)
+also makes a release of that name with both files on it, as they are (not
+zipped). Keep `<Version>` in both project files and `Version` in
+`Linux/Program.cs` in step with the tag.
+
 ## Repository layout
 
 | Folder | What's in it | Compiled into |
@@ -127,8 +150,8 @@ Measured on a full recorded run against a hand-verified answer key
 
 | | Scores confirmed | Wrong | Time per read |
 |---|---|---|---|
-| Windows and Linux (30 reads/s) | 109 | 0 | ~0.4 ms |
-| Windows on its PrintWindow fallback (10 reads/s) | 103 | 0 | ~0.4 ms |
+| Windows and Linux (30 reads/s) | 109 | 0 | ~0.35 ms |
+| Windows on its PrintWindow fallback (10 reads/s) | 103 | 0 | ~0.35 ms |
 
 The scores it misses were on screen for under ~0.2 s. Run side by side on
 Windows, it beat the Windows OCR this app used before (104 vs 89 scores,
@@ -165,7 +188,9 @@ three things, each specific to the game where it can be:
    reader looks for digits. Where it matches is where the game picture is,
    to a pixel or two. It takes about 50 ms, and is tried as soon as a
    window is picked and every few seconds until a score has confirmed the
-   crop.
+   crop. Once the menu has been seen right where the crop is, it is only
+   looked at again every 12 s, and the frame isn't searched for anything
+   else meanwhile (a score at the crop is still caught within a second).
 2. **What moves**, when the menu isn't showing: the largest moving region,
    grown to the picture's own edge (the black around it, or the outermost
    straight edge where the surroundings aren't black). This is only a
@@ -175,7 +200,12 @@ three things, each specific to the game where it can be:
    where the crop says it should be, and otherwise through the whole
    frame at different sizes, in small pieces (about 12 ms per tenth of a
    second, and nothing while the picture is still). Only the game has a
-   BattleTanx score in it. A find has to repeat on later frames. A crop
+   BattleTanx score in it. A find has to repeat on later frames. The game
+   does show a second number in the same digits on the score's row: the
+   ammunition left, near the picture's right edge. It can be a multiple of
+   25 as well (it is 100 as a run starts, when the score is a lone 0 that
+   can't be searched for), so a find with another number further left on
+   its row is not the score: the score is always the leftmost. A crop
    that already fits the score (as one from the menu does) is kept as it
    is. Otherwise the digits fix where the score band is; how far apart
    they are fixes the width (the font's spacing is known to 0.15 px); the
@@ -183,11 +213,12 @@ three things, each specific to the game where it can be:
    and the left edge is where, going left from the score, the picture
    stops moving and nothing was ever lit (or a straight edge stays put).
    The crop is then saved as confirmed, and none of this runs while the
-   score is being read. After 15 s without one (a menu, a cutscene, or the
-   game moved inside the window) it starts again, and stops when the
-   score is back. A confirmed crop, or one from the menu, is kept unless
+   score is being read: 5 s on, the whole-frame buffers it needed (25 to
+   30 MB at 1080p) are given back as well. After 15 s without one (a menu,
+   a cutscene, or the game moved inside the window) it starts again, and
+   stops when the score is back. A confirmed crop, or one from the menu, is kept unless
    the score is found clearly somewhere else: run all the time over the
-   reference run in three kinds of capture, it confirmed the right crop
+   reference run in four kinds of capture, it confirmed the right crop
    in place over 400 times each and never moved it.
 
 `ReaderBench -- layouts` plays the reference run inside different kinds of
@@ -195,9 +226,10 @@ capture and checks the crop against the truth:
 
 | Capture | At setup | Once the score shows |
 |---|---|---|
-| Set up on the menu: as captured, on a 1080p projector, stretched to 16:9, in a stream layout (webcam, animation, timer), in the capturing program's own window (webcam and still image beside the game, meters moving) | all 5 recognised by the menu in 0.7 s, within a pixel or two | confirmed 0.4 to 1.0 s after the score has 2 digits; the crop stays as it was |
+| Set up on the menu: as captured, on a 1080p projector, stretched to 16:9, in a stream layout (webcam, animation, timer) at two sizes, in the capturing program's own window (webcam and still image beside the game, meters moving) | all 6 recognised by the menu in 0.7 s, within a pixel or two | confirmed 0.4 to 1.0 s after the score has 2 digits; the crop stays as it was |
 | Set up during play: the same kinds, 13 cases | right in all 13, from what moves | confirmed within about a second of the 4 s of watching |
 | Starting from a wrong crop during play: a little off, 7% too small, half the picture, a box in the middle of it, the whole frame or window (11 crops) | | all 11 corrected: within a second when roughly right, about 4 s more when the whole 1080p frame has to be searched |
+| As the run starts (score 0, ammunition 100) in a stream layout with room right of the game: from the whole frame, from the right crop, from a crop that sits on the ammunition | | all 3 end on the game, 1 to 5 s after the score has 2 digits; the ammunition is never taken for the score |
 | No game in the frame (webcam, animation, timer) | | never confirmed (60 s) |
 
 A tester's capture of OBS's own window on the GAME SETUP menu (the game

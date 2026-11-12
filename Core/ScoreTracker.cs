@@ -46,8 +46,6 @@ namespace BgaSpnfdr
             BackwardConfirmReads = on ? 8 : 5;
         }
 
-        // plain fields rather than properties: properties generate extra
-        // methods and metadata, and the Windows exe is kept small
         private string _pendingRead; // last read awaiting confirmation
         private int _pendingCount;
         private long _confirmedScore = -1;
@@ -67,7 +65,6 @@ namespace BgaSpnfdr
         /// <summary>After HandleRead: this frame's read was the score that
         /// stands (so where its digits were found can be trusted).</summary>
         public bool ReadStands;
-
 
         /// <summary>Returns the read if it passes every sanity check,
         /// otherwise null (with the reason in Status).</summary>

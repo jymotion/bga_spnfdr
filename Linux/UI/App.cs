@@ -57,6 +57,7 @@ namespace BgaSpnfdr.UI
         private byte[] _snapshot;
         private int _snapW, _snapH;
         private int _snapshotPosted;
+        private int _picturesUnused; // ticks since anything last looked at whole pictures
 
         public App()
         {
@@ -261,7 +262,21 @@ namespace BgaSpnfdr.UI
                 else if (_checker != null && !unconfirmed && !lost && !_checker.Refining)
                     _checker = null; // the score is being read again
             }
-            _processor.WantSnapshots = (visible && _debug) || _detector != null || _checker != null;
+            bool pictures = (visible && _debug) || _detector != null || _checker != null;
+            _processor.WantSnapshots = pictures;
+            // Once the score is being read, nothing looks at whole pictures:
+            // 5 s on, the frame-sized buffers kept for them (25 MB at 1080p:
+            // this one, FrameProcessor's, MenuFinder's) go back to the
+            // system. They only do when the collector is told to run:
+            // nothing else here makes it.
+            if (pictures)
+                _picturesUnused = 0;
+            else if (_snapshot != null && ++_picturesUnused >= 25)
+            {
+                _snapshot = null;
+                MenuFinder.Release();
+                GC.Collect();
+            }
 
             string text;
             if (_detector != null)
@@ -399,8 +414,10 @@ namespace BgaSpnfdr.UI
         private void OnSnapshot()
         {
             Volatile.Write(ref _snapshotPosted, 0);
-            if (!_processor.TakeSnapshot(ref _snapshot, out _snapW, out _snapH))
+            if (!_processor.TakeSnapshot(ref _snapshot, out int width, out int height))
                 return;
+            _snapW = width;
+            _snapH = height;
             var frame = new Rectangle(0, 0, _snapW, _snapH);
             GameFinder finder = _detector ?? _checker;
             bool finished = finder != null && finder.Feed(_snapshot, _snapW, _snapH, _snapW * 4, false, frame);

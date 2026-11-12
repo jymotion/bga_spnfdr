@@ -156,6 +156,72 @@ namespace BgaSpnfdr.Tests
                 Assert.Equal(expected, actual);
             }
         }
+
+        /// <summary>Sample works each frame pixel's brightness out once and
+        /// keeps it between band pixels. What it gives must be, byte for
+        /// byte, what working every band pixel out by itself gives: the
+        /// reader and the finder were tuned on exactly these values.</summary>
+        [Fact]
+        public void SampleGivesExactlyWhatPixelByPixelGives()
+        {
+            var random = new System.Random(7);
+            for (int i = 0; i < 3000; i++)
+            {
+                int fw = random.Next(8, 700), first = random.Next(0, 40), last = first + random.Next(0, 120);
+                int stride = fw * 4 + random.Next(0, 3) * 4;
+                var px = new byte[stride * (last - first + 1)];
+                random.NextBytes(px);
+                int width = random.Next(1, 260), rows = random.Next(1, 40);
+                // every kind of scale: shrinking, 1:1, bilinear, averaged, and unequal ones
+                double sx = i % 7 == 0 ? 1 : 0.3 + random.NextDouble() * 4, sy = i % 7 == 0 ? 1 : i % 3 == 0 ? sx : 0.3 + random.NextDouble() * 4;
+                // on the frame, and off every side of it
+                double x0 = random.Next(-60, fw + 20) + (i % 4 == 0 ? 0 : random.NextDouble());
+                double y0 = random.Next(first - 30, last + 10) + (i % 4 == 0 ? 0 : random.NextDouble());
+                bool rgb = i % 2 == 0;
+                var expected = new byte[width * rows];
+                var actual = new byte[width * rows];
+                PixelByPixel(px, stride, first, last, fw, x0, y0, sx, sy, width, rows, rgb, expected);
+                ScoreBand.Sample(px, stride, first, last, fw, x0, y0, sx, sy, width, rows, rgb, actual);
+                Assert.Equal(expected, actual);
+            }
+        }
+
+        /// <summary>ScoreBand.Sample as it was first written.</summary>
+        private static void PixelByPixel(byte[] px, int stride, int first, int last, int frameWidth,
+            double x0, double y0, double sx, double sy, int width, int rows, bool rgbOrder, byte[] band)
+        {
+            int ri = rgbOrder ? 0 : 2, bi = rgbOrder ? 2 : 0;
+            bool average = sx > 1.5 || sy > 1.5;
+            for (int r = 0; r < rows; r++)
+            {
+                for (int c = 0; c < width; c++)
+                {
+                    int v;
+                    if (average)
+                    {
+                        int xa = (int)System.Math.Floor(x0 + c * sx), xb = System.Math.Max(xa + 1, (int)System.Math.Ceiling(x0 + (c + 1) * sx));
+                        int ya = (int)System.Math.Floor(y0 + r * sy), yb = System.Math.Max(ya + 1, (int)System.Math.Ceiling(y0 + (r + 1) * sy));
+                        int sum = 0, n = 0;
+                        for (int y = ya; y < yb; y++)
+                            for (int x = xa; x < xb; x++, n++)
+                                sum += ScoreBand.Luma(px, stride, first, last, frameWidth, x, y, ri, bi);
+                        v = sum / n;
+                    }
+                    else
+                    {
+                        double fx = x0 + (c + 0.5) * sx - 0.5, fy = y0 + (r + 0.5) * sy - 0.5;
+                        int ix = (int)System.Math.Floor(fx), iy = (int)System.Math.Floor(fy);
+                        double tx = fx - ix, ty = fy - iy;
+                        double a = ScoreBand.Luma(px, stride, first, last, frameWidth, ix, iy, ri, bi);
+                        double b = ScoreBand.Luma(px, stride, first, last, frameWidth, ix + 1, iy, ri, bi);
+                        double cc = ScoreBand.Luma(px, stride, first, last, frameWidth, ix, iy + 1, ri, bi);
+                        double d = ScoreBand.Luma(px, stride, first, last, frameWidth, ix + 1, iy + 1, ri, bi);
+                        v = (int)System.Math.Round((a * (1 - tx) + b * tx) * (1 - ty) + (cc * (1 - tx) + d * tx) * ty);
+                    }
+                    band[r * width + c] = (byte)System.Math.Max(0, System.Math.Min(255, v));
+                }
+            }
+        }
     }
 
     /// <summary>Core/GameFinder and Core/ScoreFinder on drawn frames: a
@@ -171,7 +237,7 @@ namespace BgaSpnfdr.Tests
         /// part noise that changes with seed, the rest of it dim and still,
         /// and the score in its place (reference geometry, 1:1).</summary>
         private static byte[] Frame(int seed, byte backdrop, string score, System.Drawing.Rectangle picture,
-            int width = W, int height = H, System.Drawing.Rectangle other = default)
+            int width = W, int height = H, System.Drawing.Rectangle other = default, string ammunition = "")
         {
             var px = new byte[width * height * 4];
             var moving = new System.Random(seed);
@@ -189,21 +255,28 @@ namespace BgaSpnfdr.Tests
                         v = (byte)moving.Next(256);
                     px[(y * width + x) * 4] = px[(y * width + x) * 4 + 1] = px[(y * width + x) * 4 + 2] = v;
                 }
-            // the score, right where the reference picture has it
-            double at = 60;
-            for (int i = 0; i < score.Length; i++)
+            // the score, right where the reference picture has it, and the
+            // ammunition left where the game shows that: on the same row
+            // in the same digits, near the picture's right edge
+            Number(px, width, picture, score, 60);
+            Number(px, width, picture, ammunition, 515);
+            return px;
+        }
+
+        private static void Number(byte[] px, int width, System.Drawing.Rectangle picture, string digits, double at)
+        {
+            for (int i = 0; i < digits.Length; i++)
             {
                 for (int r = 0; r < DigitReader.BandHeight; r++)
                     for (int c = 0; c < DigitReader.GlyphWidth; c++)
                     {
                         int x = picture.X + (int)System.Math.Round(at) + c, y = picture.Y + DigitReader.BandTop + r;
-                        byte v = DigitReader.Glyph(score[i] - '0', r, c);
+                        byte v = DigitReader.Glyph(digits[i] - '0', r, c);
                         px[(y * width + x) * 4] = px[(y * width + x) * 4 + 1] = px[(y * width + x) * 4 + 2] = v;
                     }
-                if (i + 1 < score.Length)
-                    at += ScoreFinder.Advance(score[i], score[i + 1]);
+                if (i + 1 < digits.Length)
+                    at += ScoreFinder.Advance(digits[i], digits[i + 1]);
             }
-            return px;
         }
 
         private static void AssertNear(System.Drawing.Rectangle expected, System.Drawing.Rectangle actual, int within)
@@ -270,6 +343,105 @@ namespace BgaSpnfdr.Tests
             Assert.True(f.Recognized);
             Assert.InRange(frames, 1, 3); // at once, not after watching for 4 s
             AssertNear(menu, f.Result, 4);
+        }
+
+        [Fact]
+        public void CheckLooksForTheMenuOnlyNowAndThenWhileItShowsAtTheCrop()
+        {
+            // the usual setup: the game sits on its menu, the crop is from
+            // it, and a webcam moves beside it. Each look for the menu goes
+            // over the whole frame, so it mustn't happen on every frame
+            // (it did: 40-60 ms a frame at 1080p for as long as the menu showed)
+            var menu = new System.Drawing.Rectangle(250, 100, 480, 270);
+            var webcam = new System.Drawing.Rectangle(20, 40, 200, 150);
+            const int width = 800, height = 450;
+            var area = new System.Drawing.Rectangle(0, 0, width, height);
+            foreach (bool moving in new[] { true, false })
+            {
+                GameFinder f = GameFinder.Check(menu, true);
+                for (int i = 0; i < 300; i++)
+                {
+                    byte[] px = Frame(moving ? i : 0, 30, "", System.Drawing.Rectangle.Empty, width, height, webcam);
+                    for (int y = menu.Top; y < menu.Bottom; y++)
+                        for (int x = menu.Left; x < menu.Right; x++)
+                        {
+                            byte v = MenuFinder.Value((x - menu.X) * 48 / menu.Width, (y - menu.Y) * 36 / menu.Height);
+                            px[(y * width + x) * 4] = px[(y * width + x) * 4 + 1] = px[(y * width + x) * 4 + 2] = v;
+                        }
+                    Assert.False(f.Feed(px, width, height, width * 4, false, area)); // the crop stays
+                    if (i == 40)
+                        Assert.True(f.MenuSeen && f.MenuHere); // within 4 s
+                }
+                Assert.True(f.MenuHere);
+                Assert.InRange(f.MenuLooks, 4, 10); // not 300
+            }
+        }
+
+        [Fact]
+        public void CheckFindsAScoreThatComesUpOnAPictureThatOtherwiseHoldsStill()
+        {
+            // nothing but the score changes, and it sits between the points
+            // Check glances at to see whether the picture has changed (they
+            // are 35 rows apart here): the crop is still tried now and then
+            const int width = 1280, height = 960;
+            var picture = new System.Drawing.Rectangle(300, 24, 617, 474);
+            var area = new System.Drawing.Rectangle(0, 0, width, height);
+            byte[] before = Frame(1, 0, "", picture, width, height), after = Frame(1, 0, "239800", picture, width, height);
+            GameFinder f = GameFinder.Check(picture, true);
+            int frames = 0;
+            for (; frames < 200; frames++)
+                if (f.Feed(frames < 40 ? before : after, width, height, width * 4, false, area) && !f.Refining)
+                    break;
+            Assert.True(f.Verified);
+            Assert.InRange(frames, 40, 140); // within 10 s of it coming up
+        }
+
+        [Fact]
+        public void CheckDoesNotTakeTheAmmunitionForTheScore()
+        {
+            // The start of a run: the score is a lone 0, which can't be
+            // searched for, and the ammunition left is 100: three digits, a
+            // multiple of 25, on the score's row. A crop that is right (from
+            // the menu) must stay; the search over the whole frame used to
+            // move it onto the ammunition, where the room allowed
+            const int width = 1280, height = 600;
+            var picture = new System.Drawing.Rectangle(20, 60, 617, 474);
+            var area = new System.Drawing.Rectangle(0, 0, width, height);
+            GameFinder f = GameFinder.Check(picture, true);
+            for (int i = 0; i < 400; i++)
+                Assert.False(f.Feed(Frame(i, 0, "0", picture, width, height, default, "100"), width, height, width * 4, false, area),
+                    $"frame {i}: {f.Result}");
+
+            // ... and with a score to go by, that is what a wrong crop is
+            // set right by, though the ammunition is the longer number
+            f = GameFinder.Check(new System.Drawing.Rectangle(700, 100, 400, 300), false);
+            for (int i = 0; i < 1500; i++)
+                if (f.Feed(Frame(i, 0, "25", picture, width, height, default, "100"), width, height, width * 4, false, area)
+                    && !f.Refining)
+                    break;
+            Assert.True(f.Verified);
+            AssertAtTheScore(picture, f.Result);
+
+            // ... and so is a crop that sits on the ammunition
+            var onAmmunition = new System.Drawing.Rectangle(picture.X + 455, picture.Y, picture.Width, picture.Height);
+            f = GameFinder.Check(onAmmunition, true);
+            for (int i = 0; i < 1500; i++)
+                if (f.Feed(Frame(i, 0, "150", picture, width, height, default, "100"), width, height, width * 4, false, area)
+                    && !f.Refining)
+                    break;
+            Assert.True(f.Verified);
+            AssertAtTheScore(picture, f.Result);
+        }
+
+        /// <summary>The crop is the picture as far as a short score tells:
+        /// its place and height, and its width to 6% (two or three digits
+        /// are a short ruler for that).</summary>
+        private static void AssertAtTheScore(System.Drawing.Rectangle picture, System.Drawing.Rectangle crop)
+        {
+            Assert.True(System.Math.Abs(crop.X - picture.X) <= 10 && System.Math.Abs(crop.Y - picture.Y) <= 10
+                && System.Math.Abs(crop.Height - picture.Height) <= 10
+                && System.Math.Abs(crop.Width - picture.Width) <= 0.06 * picture.Width,
+                $"expected about {picture}, got {crop}");
         }
 
         [Fact]

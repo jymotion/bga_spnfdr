@@ -98,7 +98,6 @@ namespace BgaSpnfdr
             return CapturePrintWindow(hWnd, crop);
         }
 
-
         private bool CapturePrintWindow(IntPtr hWnd, Rectangle crop)
         {
             var bmp = _printWindow.Capture(hWnd);
@@ -235,6 +234,24 @@ namespace BgaSpnfdr
             }
             _bitmapFrame = _graphics.FrameNumber;
             Frame = _bitmap;
+        }
+
+        /// <summary>Lets go of the whole picture Windows.Graphics.Capture
+        /// was asked for, and of what it took to fetch it: nobody is
+        /// looking at whole pictures any more. (PrintWindow's is its only
+        /// buffer, needed for every read.)</summary>
+        public void DropFrame()
+        {
+            if (_bitmap != null)
+            {
+                if (Frame == _bitmap)
+                    Frame = null;
+                _bitmap.Dispose();
+                _bitmap = null;
+                _bitmapFrame = 0;
+                _bitmapArea = Rectangle.Empty;
+            }
+            _graphics?.DropFullFrame();
         }
 
         private void StopGraphics()

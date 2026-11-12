@@ -24,7 +24,6 @@ namespace BgaSpnfdr
         public bool NotesTopMost = true;
         public Point NotesLocation = new Point(80, 80);
         public Rectangle SetupBounds = Rectangle.Empty;
-        public bool SetupMaximized;
 
         public static string FilePath()
         {
@@ -65,7 +64,6 @@ namespace BgaSpnfdr
                         if (value.Split(',').Length == 2) s.NotesLocation = new Point(p.X, p.Y);
                         break;
                     case "SetupBounds": s.SetupBounds = ParseRect(value, s.SetupBounds); break;
-                    case "SetupMaximized": if (bool.TryParse(value, out bool max)) s.SetupMaximized = max; break;
                 }
             }
             return s;
@@ -88,7 +86,6 @@ namespace BgaSpnfdr
                     "NotesTopMost=" + NotesTopMost,
                     $"NotesPos={NotesLocation.X},{NotesLocation.Y}",
                     $"SetupBounds={SetupBounds.X},{SetupBounds.Y},{SetupBounds.Width},{SetupBounds.Height}",
-                    "SetupMaximized=" + SetupMaximized,
                 });
             }
             catch (IOException) { }

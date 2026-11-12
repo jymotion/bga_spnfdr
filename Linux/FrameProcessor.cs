@@ -48,6 +48,7 @@ namespace BgaSpnfdr
         private readonly object _snapshotLock = new object();
         private byte[] _snapshot = Array.Empty<byte>();
         private int _snapshotW, _snapshotH;
+        private bool _snapshotNew; // not taken yet
 
         public volatile int FrameWidth, FrameHeight;
         public string Status => _tracker.Status;
@@ -125,22 +126,35 @@ namespace BgaSpnfdr
                 CopySnapshot(f);
                 SnapshotReady?.Invoke();
             }
+            else if (!WantSnapshots && _snapshot.Length > 0)
+            {
+                // nobody is looking at whole pictures any more: the buffer
+                // for them (8 MB at 1080p) isn't kept
+                lock (_snapshotLock)
+                {
+                    _snapshot = Array.Empty<byte>();
+                    _snapshotNew = false;
+                }
+            }
         }
 
-        /// <summary>UI thread: copies the latest snapshot (B,G,R,x packed,
-        /// stride = width*4) into the caller's buffer.</summary>
+        /// <summary>UI thread: hands over the newest snapshot (B,G,R,x
+        /// packed, stride = width*4) in exchange for the caller's buffer,
+        /// which the next one is written into (nothing is copied). False,
+        /// with the caller's buffer left alone, if there is no snapshot
+        /// newer than the one last taken.</summary>
         public bool TakeSnapshot(ref byte[] buffer, out int width, out int height)
         {
             lock (_snapshotLock)
             {
                 width = _snapshotW;
                 height = _snapshotH;
-                if (width == 0)
+                if (!_snapshotNew)
                     return false;
-                int n = width * height * 4;
-                if (buffer == null || buffer.Length != n)
-                    buffer = new byte[n];
-                Buffer.BlockCopy(_snapshot, 0, buffer, 0, n);
+                _snapshotNew = false;
+                byte[] newest = _snapshot;
+                _snapshot = buffer ?? Array.Empty<byte>();
+                buffer = newest;
                 return true;
             }
         }
@@ -169,6 +183,7 @@ namespace BgaSpnfdr
                 }
                 _snapshotW = f.Width;
                 _snapshotH = f.Height;
+                _snapshotNew = true;
             }
         }
     }

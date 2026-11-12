@@ -238,6 +238,14 @@ namespace BgaSpnfdr
             }
         }
 
+        /// <summary>Lets go of the CPU-readable texture for full frames
+        /// (as big as the window): Copy makes it again when next asked.</summary>
+        public void DropFullFrame()
+        {
+            Release(ref _staging[1]);
+            _stagingSize[1] = Size.Empty;
+        }
+
         // ----- the yellow border around a captured window -----
 
         /// <summary>Windows 11 lets apps turn the border off once they've

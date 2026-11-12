@@ -9,7 +9,7 @@ namespace BgaSpnfdr
     {
         // keep in step with <Version> in bga_spnfdr.csproj (asking the
         // program itself for it would add reflection code to it)
-        private const string Version = "1.2.0";
+        private const string Version = "1.4.0";
 
         private static App _app; // keeps the app (and its callbacks) alive
 

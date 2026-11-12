@@ -22,6 +22,9 @@ namespace BgaSpnfdr
         // through it for this long (ms): the game may have been moved inside
         // the window, which doesn't change the window's size
         private const int LostAfter = 15000;
+        // Once nothing has looked at whole pictures for this many ticks of
+        // the side tasks (~5 s), what is kept for them is let go of
+        private const int ReleaseAfter = 50;
 
         private readonly AppSettings _settings;
         private readonly FrameSource _source = new FrameSource();
@@ -58,6 +61,8 @@ namespace BgaSpnfdr
         private GameFinder _detector, _checker;
         private bool _reported;            // the finder at work has given a result already
         private byte[] _pixels = new byte[0]; // the newest whole picture, for the finders
+        private int _picturesUnused;          // side-task ticks since anything looked at whole pictures
+        private int _sinceSearch;             // ms since the saved window was last looked for
         private string _stickyStatus;       // status message that survives a few ticks
         private DateTime _stickyUntil;
 
@@ -113,6 +118,8 @@ namespace BgaSpnfdr
             FindSavedWindow();
             if (_targetWindow != IntPtr.Zero && _settings.Crop.IsEmpty)
                 StartAutoCrop(AutoCropFramesInitial); // window known but never cropped
+            else if (_targetWindow == IntPtr.Zero && _settings.WindowTitle.Length > 0)
+                _statusLabel.Text = "Waiting for last time's window to open — or select another."; // (CaptureFrame looks)
 
             // restore the notes window as it was last time
             bool onScreen = Screen.AllScreens.Any(s =>
@@ -447,6 +454,23 @@ namespace BgaSpnfdr
 
         private void CaptureFrame()
         {
+            // The window chosen last time may not have been open yet when
+            // the program started, or has been closed and opened again: it
+            // is looked for about once a second until it is there
+            if ((_targetWindow == IntPtr.Zero || !Native.IsWindow(_targetWindow)) && !_picker.Active
+                && (_sinceSearch += _timer.Interval) >= 1000)
+            {
+                _sinceSearch = 0;
+                IntPtr before = _targetWindow;
+                FindSavedWindow();
+                if (_targetWindow != before)
+                {
+                    _sinceScore.Restart();
+                    UpdateButtonLabels();
+                    if (_settings.Crop.IsEmpty)
+                        StartAutoCrop(AutoCropFramesInitial);
+                }
+            }
             if (_targetWindow == IntPtr.Zero)
                 return;
 
@@ -465,7 +489,7 @@ namespace BgaSpnfdr
                 if (!_picker.Active)
                     _statusLabel.Text = Native.IsWindow(_targetWindow)
                         ? "Capture failed — is the window minimized? (Restore it; covering it is fine.)"
-                        : "That window was closed. Click \"Select Capture Window\" to pick another.";
+                        : "That window was closed — waiting for it to open again. (Or select another.)";
                 return;
             }
             if (_source.Frame != null)
@@ -504,6 +528,21 @@ namespace BgaSpnfdr
             }
             if ((_detector != null || _checker != null) && _capture != null)
                 FeedFinder();
+
+            // Once the score is being read, nothing looks at whole pictures:
+            // 5 s on, what is kept for them (about 30 MB at 1080p) goes back
+            // to the system. The arrays only do when the collector is told
+            // to run: nothing else here makes it.
+            if (_detector != null || _checker != null || (_debug && Visible && WindowState != FormWindowState.Minimized))
+                _picturesUnused = 0;
+            else if (_picturesUnused < ReleaseAfter && ++_picturesUnused == ReleaseAfter)
+            {
+                _pixels = new byte[0];
+                _source.DropFrame();
+                _capture = _source.Frame;
+                MenuFinder.Release();
+                GC.Collect();
+            }
             if (!Visible || _picker.Active)
                 return; // (while picking a window, the status bar shows the pick prompt)
 
@@ -707,7 +746,6 @@ namespace BgaSpnfdr
                 if (_debug)
                     _debugSize = bounds.Size;
                 _settings.SetupBounds = new Rectangle(bounds.Location, _debugSize);
-                _settings.SetupMaximized = false;
             }
             _settings.Save();
         }
