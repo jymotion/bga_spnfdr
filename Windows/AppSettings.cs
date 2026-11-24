@@ -14,6 +14,8 @@ namespace BgaSpnfdr
     {
         public string WindowTitle = string.Empty;
         public Rectangle Crop = Rectangle.Empty;
+        public Size CropWindowSize = Size.Empty; // capture-window size the crop was made for
+        public bool CropVerified;                // the score has been found in it (Core/GameFinder)
         public string CsvPath = string.Empty;
         public float NotesFontSize = 48f;
         public string NotesFontFamily = "Segoe UI";
@@ -23,7 +25,6 @@ namespace BgaSpnfdr
         public bool NotesTopMost = true;
         public Point NotesLocation = new Point(80, 80);
         public Rectangle SetupBounds = Rectangle.Empty;
-        public bool SetupMaximized;
 
         private static string FilePath()
         {
@@ -65,6 +66,14 @@ namespace BgaSpnfdr
                     case "Crop":
                         s.Crop = ParseRect(value, s.Crop);
                         break;
+                    case "CropWindowSize":
+                        var made = ParseRect(value + ",0,0", Rectangle.Empty);
+                        s.CropWindowSize = new Size(made.X, made.Y);
+                        break;
+                    case "CropVerified":
+                        if (bool.TryParse(value, out bool verified))
+                            s.CropVerified = verified;
+                        break;
                     case "Csv":
                         s.CsvPath = value;
                         break;
@@ -98,10 +107,6 @@ namespace BgaSpnfdr
                     case "SetupBounds":
                         s.SetupBounds = ParseRect(value, s.SetupBounds);
                         break;
-                    case "SetupMaximized":
-                        if (bool.TryParse(value, out bool max))
-                            s.SetupMaximized = max;
-                        break;
                 }
             }
             return s;
@@ -115,6 +120,8 @@ namespace BgaSpnfdr
                 {
                     "Window=" + WindowTitle,
                     $"Crop={Crop.X},{Crop.Y},{Crop.Width},{Crop.Height}",
+                    $"CropWindowSize={CropWindowSize.Width},{CropWindowSize.Height}",
+                    "CropVerified=" + CropVerified,
                     "Csv=" + CsvPath,
                     "NotesFont=" + NotesFontSize.ToString(CultureInfo.InvariantCulture),
                     "NotesFontFamily=" + NotesFontFamily,
@@ -124,7 +131,6 @@ namespace BgaSpnfdr
                     "NotesTopMost=" + NotesTopMost,
                     $"NotesPos={NotesLocation.X},{NotesLocation.Y}",
                     $"SetupBounds={SetupBounds.X},{SetupBounds.Y},{SetupBounds.Width},{SetupBounds.Height}",
-                    "SetupMaximized=" + SetupMaximized,
                 });
             }
             catch (IOException) { }

@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>bga_spnfdr</AssemblyName>
+    <RootNamespace>BgaSpnfdr</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.4.0</Version>
+    <Company>bga_spnfdr</Company>
+    <Product>bga_spnfdr</Product>
+    <Description>Displays BattleTanx: Global Assault route notes based on the on-screen score</Description>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Direct3D 11 is called through its function tables (Windows/GraphicsCapture.cs) -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Vector4, for matching digits four products at a time (part of .NET Framework) -->
+    <Reference Include="System.Numerics" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <!-- WinRT projections for Windows.Graphics.Capture. Build-time only:
+         .NET Framework calls WinRT itself, so the exe stays a single file. -->
+    <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.22621.2428" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Platform-neutral logic shared with the Linux build, compiled straight
+         into this exe (no extra DLL). This project only ever sees Windows/
+         and Core/; nothing Linux-specific can end up in the Windows build. -->
+    <Compile Include="..\Core\*.cs" Link="Core\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

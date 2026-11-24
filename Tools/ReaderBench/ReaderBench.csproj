@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Measures Linux/DigitReader on the reference run (footage branch)
+       against a hand-verified ground truth, through the real
+       Core/ScoreTracker. Not part of any shipped build. Needs ffmpeg.
+       Usage: see Tools/ReaderBench/Program.cs (fps and footage folder args). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>BgaSpnfdr.Bench</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- same confirmation rule as the Linux app, which reads every frame;
+         build with -p:WindowsRules=true for the Windows app's (10 reads/s) -->
+    <DefineConstants Condition="'$(WindowsRules)' != 'true'">$(DefineConstants);READ_EVERY_FRAME</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Core/DigitReader reads through pointers (Vector4) -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Core\*.cs" Link="Core\%(Filename)%(Extension)" />
+    <None Include="ground-truth.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

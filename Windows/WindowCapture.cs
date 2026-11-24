@@ -6,7 +6,8 @@ namespace BgaSpnfdr
 {
     /// <summary>
     /// Captures a window's full contents (even while covered by other windows)
-    /// via PrintWindow. Reuses one bitmap buffer across frames — at 10 fps the
+    /// via PrintWindow: FrameSource's fallback when Windows.Graphics.Capture
+    /// isn't available. Reuses one bitmap buffer across frames — at 10 fps the
     /// old allocate-per-frame approach churned a full-window bitmap through
     /// the GC ten times a second for nothing.
     /// </summary>
